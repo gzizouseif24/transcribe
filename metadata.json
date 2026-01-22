@@ -1,0 +1,5 @@
+{
+  "name": "Tunisian Arabic Transcriber",
+  "description": "Batch audio transcription for Tunisian dialect using multi-agent AI workflow powered by Gemini 3 Flash.",
+  "requestFramePermissions": []
+}
