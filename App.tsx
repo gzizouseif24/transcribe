@@ -1,5 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { v4 as uuidv4 } from 'uuid'; 
+import React, { useState, useEffect } from 'react';
 import { FileUploader } from './components/FileUploader';
 import { TranscriptionItemCard } from './components/TranscriptionItemCard';
 import { TranscriptionItem, ProcessingStatus } from './types';
@@ -33,24 +32,6 @@ const App: React.FC = () => {
   const [items, setItems] = useState<TranscriptionItem[]>([]);
   const [guidelines, setGuidelines] = useState(DEFAULT_GUIDELINES);
   const [showGuidelines, setShowGuidelines] = useState(false);
-  const [hasApiKey, setHasApiKey] = useState(false);
-  const [isCheckingKey, setIsCheckingKey] = useState(true);
-
-  // Check for API Key on mount
-  useEffect(() => {
-    const checkKey = async () => {
-      if (window.aistudio) {
-        const hasKey = await window.aistudio.hasSelectedApiKey();
-        setHasApiKey(hasKey);
-      } else {
-        // Fallback for environments without the bridge (e.g. local dev with .env)
-        // We assume true here so the UI renders, and services/gemini.ts will throw if it's actually missing.
-        setHasApiKey(true);
-      }
-      setIsCheckingKey(false);
-    };
-    checkKey();
-  }, []);
 
   // --- Queue Management System ---
   // Watches the items list. If fewer than MAX_CONCURRENCY items are processing,
@@ -69,34 +50,6 @@ const App: React.FC = () => {
       }
     }
   }, [items]);
-
-  const handleSelectKey = async () => {
-    if (window.aistudio) {
-      try {
-        await window.aistudio.openSelectKey();
-        // Assuming success after the dialog closes (race condition mitigation)
-        setHasApiKey(true);
-      } catch (e) {
-        console.error("Failed to select key:", e);
-        alert("Failed to select API key. Please try again.");
-      }
-    } else {
-      alert("API Key selection is not available in this environment. Please configure process.env.API_KEY.");
-    }
-  };
-
-  const handleApiError = (error: any) => {
-    const errorStr = error.toString();
-    // Reset state to force re-selection for common auth/setup errors
-    if (
-        errorStr.includes("Requested entity was not found") || 
-        errorStr.includes("API Key is missing") ||
-        errorStr.includes("403") // Permission denied
-    ) {
-      setHasApiKey(false);
-      alert("API Key issue detected. Please re-select a valid API Key/Project.");
-    }
-  };
 
   // Phase 1: Generate Draft Text (Single Pass)
   const startTextGeneration = async (id: string) => {
@@ -120,11 +73,10 @@ const App: React.FC = () => {
 
     } catch (error: any) {
       console.error(`Error generating text for ${id}:`, error);
-      handleApiError(error);
-      setItems(prev => prev.map(i => i.id === id ? { 
-        ...i, 
-        status: ProcessingStatus.ERROR, 
-        error: error.message 
+      setItems(prev => prev.map(i => i.id === id ? {
+        ...i,
+        status: ProcessingStatus.ERROR,
+        error: error.message
       } : i));
     }
   };
@@ -170,13 +122,12 @@ const App: React.FC = () => {
       } : i));
 
     } catch (error: any) {
-       console.error(`Error aligning JSON for ${id}:`, error);
-       handleApiError(error);
-       setItems(prev => prev.map(i => i.id === id ? { 
-         ...i, 
-         status: ProcessingStatus.ERROR, 
-         error: "JSON Alignment failed: " + error.message
-       } : i));
+      console.error(`Error aligning JSON for ${id}:`, error);
+      setItems(prev => prev.map(i => i.id === id ? {
+        ...i,
+        status: ProcessingStatus.ERROR,
+        error: "JSON Alignment failed: " + error.message
+      } : i));
     }
   };
   
@@ -219,56 +170,6 @@ const App: React.FC = () => {
   const clearCompleted = () => {
     setItems(prev => prev.filter(item => item.status !== ProcessingStatus.COMPLETED));
   };
-
-  if (isCheckingKey) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="animate-pulse flex flex-col items-center">
-          <div className="w-12 h-12 bg-indigo-200 rounded-full mb-4"></div>
-          <div className="h-4 w-32 bg-slate-200 rounded"></div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!hasApiKey) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xl max-w-md w-full p-8 text-center">
-          <div className="w-16 h-16 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-6 text-2xl">
-            <i className="fa-solid fa-key"></i>
-          </div>
-          <h1 className="text-2xl font-bold text-slate-800 mb-2">Configure API Key</h1>
-          <p className="text-slate-600 mb-6">
-            To use the Tunisian Arabic Transcriber, select a Google Cloud project with the Gemini API enabled.
-          </p>
-          
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6 text-left">
-            <h3 className="text-sm font-semibold text-amber-800 mb-1">Troubleshooting:</h3>
-            <ul className="list-disc list-inside text-xs text-amber-700 space-y-1">
-                <li>If your project doesn't appear in the list, verify it has <strong>billing enabled</strong>.</li>
-                <li>Ensure the <strong>Gemini API</strong> is enabled in the Google Cloud Console.</li>
-                <li>Refresh the page and try selecting again.</li>
-            </ul>
-          </div>
-
-          <button
-            onClick={handleSelectKey}
-            className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors shadow-sm mb-4"
-          >
-            Select Google Gemini API Key
-          </button>
-          
-          <p className="text-xs text-slate-400">
-            Billing is required for the project. <br/>
-            <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:underline">
-              Learn more about billing
-            </a>
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   // Count items ready for batch processing
   const idleCount = items.filter(i => i.status === ProcessingStatus.IDLE).length;
