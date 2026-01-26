@@ -206,10 +206,11 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({ it
           // Overlaps
           if (start < prevEnd) {
              // Allow tiny overlap for floating point drift, but flag real overlaps
-             if (prevEnd - start > 0.05) {
+             const overlapAmount = prevEnd - start;
+             if (overlapAmount > 0.05) {
                 result.isValid = false;
-                const overlap = (prevEnd - start).toFixed(2);
-                result.errors.push(`Segment #${idx} [Timestamp Misalignment]: Overlaps with Segment #${idx-1} by ${overlap}s. (Start: ${start}, Prev End: ${prevEnd})`);
+                const overlapStr = overlapAmount.toFixed(2);
+                result.errors.push(`Segment #${idx} [Timestamp Misalignment]: Overlaps with Segment #${idx-1} by ${overlapStr}s. (Start: ${start}, Prev End: ${prevEnd})`);
              }
           }
 
@@ -409,21 +410,21 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({ it
             <div>
                <div className="flex items-center justify-between mb-2">
                  <label className="text-sm font-semibold text-slate-700">
-                    <span className="bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded text-xs mr-2">Step 1 Complete</span>
-                    Review & Edit Text
+                    <span className="bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded text-xs mr-2">Step 1</span>
+                    {item.status === ProcessingStatus.TEXT_READY ? 'Review & Edit Text' : 'Verified Text Source'}
                  </label>
-                 {item.status === ProcessingStatus.TEXT_READY && (
-                   <span className="text-xs text-amber-600 animate-pulse">
-                     <i className="fa-solid fa-pen mr-1"></i> Make edits before aligning
+                 {(item.status === ProcessingStatus.ALIGNING_JSON || item.status === ProcessingStatus.COMPLETED) && (
+                   <span className="text-xs font-bold text-emerald-600 flex items-center">
+                     <i className="fa-solid fa-circle-check mr-1.5"></i> Verbatim Source
                    </span>
                  )}
                </div>
                <textarea
                   value={item.finalTranscription || ''}
                   onChange={(e) => onUpdate(item.id, e.target.value)}
-                  disabled={item.status !== ProcessingStatus.TEXT_READY && item.status !== ProcessingStatus.COMPLETED}
+                  disabled={item.status !== ProcessingStatus.TEXT_READY}
                   className={`w-full bg-white border rounded-lg p-4 arabic-text text-lg leading-loose shadow-sm outline-none resize-y min-h-[120px] transition-colors
-                    ${item.status === ProcessingStatus.TEXT_READY ? 'border-indigo-300 focus:ring-2 focus:ring-indigo-500' : 'border-slate-200 text-slate-600 bg-slate-50'}
+                    ${item.status === ProcessingStatus.TEXT_READY ? 'border-indigo-300 focus:ring-2 focus:ring-indigo-500' : 'border-slate-200 text-slate-500 bg-slate-50 cursor-not-allowed'}
                   `}
                   placeholder="Transcription..."
                 />
@@ -439,7 +440,10 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({ it
                  {item.status === ProcessingStatus.ALIGNING_JSON ? (
                     <div className="flex items-center justify-center h-24 text-purple-600">
                         <i className="fa-solid fa-circle-notch fa-spin text-2xl mr-3"></i>
-                        <span>Aligning text to timestamps...</span>
+                        <div className="text-center">
+                            <span className="font-bold block">Aligning Verified Text...</span>
+                            <span className="text-[10px] text-purple-400">Distributing words to timestamps</span>
+                        </div>
                     </div>
                  ) : (
                     <div className="space-y-3">
@@ -477,62 +481,22 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({ it
                                         {validationResult.errors.slice(0, 5).map((err, i) => (
                                             <li key={i}>{err}</li>
                                         ))}
-                                        {validationResult.errors.length > 5 && (
-                                            <li>...and {validationResult.errors.length - 5} more errors.</li>
-                                        )}
                                     </ul>
                                 )}
 
-                                {/* Stats & Sanity Check (Always shown if parseable) */}
+                                {/* Stats & Sanity Check */}
                                 {validationResult.stats && (
                                     <div className="bg-white/50 rounded p-2 mb-2 text-slate-700 space-y-1">
                                         <div className="font-semibold text-slate-800 text-[11px] uppercase tracking-wider mb-1">Sanity Check Report</div>
                                         
-                                        <div className="flex justify-between items-center">
-                                            <span>Speakers Detected:</span>
-                                            <div className="flex items-center space-x-2">
-                                                 <span className={`font-mono font-bold ${validationResult.stats.headerSpeakerCount !== undefined && validationResult.stats.headerSpeakerCount !== validationResult.stats.uniqueSpeakers.length ? 'text-red-600' : ''}`}>
-                                                    {validationResult.stats.uniqueSpeakers.length}
-                                                 </span>
-                                                 {validationResult.stats.headerSpeakerCount !== undefined && (
-                                                     <span className="text-[10px] text-slate-400">
-                                                        (Header claims: {validationResult.stats.headerSpeakerCount})
-                                                     </span>
-                                                 )}
-                                            </div>
+                                        <div className="flex justify-between items-center text-[10px]">
+                                            <span>Unique Speakers:</span>
+                                            <span className="font-bold">{validationResult.stats.uniqueSpeakers.length}</span>
                                         </div>
-                                        <div className="flex flex-wrap gap-1 mt-1 pl-2 border-l-2 border-slate-300 mb-2">
-                                            {validationResult.stats.uniqueSpeakers.map(s => (
-                                                <span key={s} className="bg-slate-200 text-slate-600 px-1.5 rounded text-[10px]">{s}</span>
-                                            ))}
-                                        </div>
-
-                                        <div className="flex justify-between">
-                                            <span>JSON End Time:</span>
+                                        <div className="flex justify-between text-[10px]">
+                                            <span>JSON Ends At:</span>
                                             <span className="font-mono">{formatTime(validationResult.stats.totalJsonDuration)}</span>
                                         </div>
-                                        {validationResult.stats.headerDuration !== undefined && (
-                                            <div className="flex justify-between">
-                                                <span>Header Duration:</span>
-                                                <span className="font-mono">{formatTime(validationResult.stats.headerDuration)}</span>
-                                            </div>
-                                        )}
-                                        {validationResult.stats.audioDuration > 0 && (
-                                            <div className="flex justify-between">
-                                                <span>Audio File:</span>
-                                                <span className="font-mono">{formatTime(validationResult.stats.audioDuration)}</span>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-
-                                {/* Warnings */}
-                                {validationResult.warnings.length > 0 && (
-                                    <div className="mt-2 text-amber-700 border-t border-amber-200 pt-2">
-                                        <div className="font-bold flex items-center"><i className="fa-solid fa-triangle-exclamation mr-1.5"></i> Warnings (Check these):</div>
-                                        <ul className="list-disc list-inside mt-1">
-                                            {validationResult.warnings.map((w, i) => <li key={i}>{w}</li>)}
-                                        </ul>
                                     </div>
                                 )}
                             </div>
@@ -553,19 +517,7 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({ it
                                 onClick={() => onStartJson(item.id, jsonInput)}
                                 className="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors animate-fade-in"
                             >
-                                Align Text to JSON <i className="fa-solid fa-arrow-right-arrow-left ml-2"></i>
-                            </button>
-                        )}
-                        
-                        {isJsonValidated && (
-                            <button 
-                                onClick={() => {
-                                    setIsJsonValidated(false); 
-                                    setValidationResult(null);
-                                }} 
-                                className="w-full text-xs text-slate-400 hover:text-slate-600 underline"
-                            >
-                                Edit JSON / Re-validate
+                                Align Corrected Text <i className="fa-solid fa-arrow-right-arrow-left ml-2"></i>
                             </button>
                         )}
                     </div>
@@ -578,7 +530,7 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({ it
                 <div>
                      <div className="flex items-center justify-between mb-2">
                         <label className="text-sm font-semibold text-emerald-700">
-                            <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-xs mr-2">Final Output</span>
+                            <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-xs mr-2">Output</span>
                             Aligned JSON
                         </label>
                         <div className="flex items-center space-x-3">
@@ -598,13 +550,9 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({ it
                                 }`}
                             >
                                 {isCopied ? (
-                                    <>
-                                        <i className="fa-solid fa-check mr-1.5"></i> Copied!
-                                    </>
+                                    <><i className="fa-solid fa-check mr-1.5"></i> Copied!</>
                                 ) : (
-                                    <>
-                                        <i className="fa-regular fa-copy mr-1.5"></i> Copy JSON
-                                    </>
+                                    <><i className="fa-regular fa-copy mr-1.5"></i> Copy JSON</>
                                 )}
                             </button>
                         </div>
@@ -614,7 +562,6 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({ it
                     </div>
                 </div>
             )}
-
           </div>
         )}
 

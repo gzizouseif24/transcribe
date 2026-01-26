@@ -130,18 +130,17 @@ export const generateDraftTranscription = async (
   const safeMimeType = normalizeMimeType(mimeType);
 
   const prompt = `
-    Task: Transcribe the attached audio in Tunisian Arabic (Derja).
-    
-    Instructions:
-    1. Listen carefully to the audio.
-    2. Write down exactly what is said, capturing the natural flow as a single cohesive paragraph.
-    3. Apply the following Formatting Guidelines immediately while transcribing:
-    
+    SYSTEM ROLE: You are a strict, verbatim transcriber for Tunisian Arabic (Derja).
+
+    RULES:
+    1. WRITE EXACTLY WHAT YOU HEAR. Do not hallucinate. Do not "fix" grammar.
+    2. NUMBERS: ALWAYS use digits (e.g., "5", "1990"). NEVER write numbers as words.
+    3. Output as a single, unformatted paragraph.
+
+    USER GUIDELINES (APPLY THESE):
     ${guidelines}
 
-    Output Requirement:
-    - Return ONLY the final transcription text.
-    - No markdown formatting, no headers, no JSON.
+    Output only the transcription text.
   `;
 
   const operation = async () => {
@@ -154,6 +153,11 @@ export const generateDraftTranscription = async (
           { inlineData: { mimeType: safeMimeType, data: base64Audio } },
           { text: prompt }
         ]
+      },
+      // Lower temperature to reduce hallucinations/creativity
+      config: {
+        temperature: 0.2, 
+        topP: 0.95,
       }
     });
     const text = response.text;
@@ -186,63 +190,25 @@ export const alignJsonToAudioAndText = async (
   const modelId = "gemini-3-flash-preview";
   const safeMimeType = normalizeMimeType(mimeType);
 
+  // Simplified prompt to reduce input tokens and processing time
   const prompt = `
-    You are an Expert Aligner for Tunisian Arabic.
-    
-    INPUTS:
-    1. Audio File (attached).
-    2. Reference Text (Provided below) - THIS IS THE GOLD STANDARD "TRUTH".
-    3. JSON Skeleton (Provided below) - Contains timestamps and speakers.
+    ROLE: You are an audio-to-text aligner.
+    TASK: Fill the "transcription" fields in the provided JSON Skeleton using the Reference Text.
 
-    YOUR TASK:
-    Fill the "transcription" fields in the JSON Skeleton by distributing the Reference Text into the correct time segments.
-    
-    CRITICAL RULES:
-    1. **Source of Truth**: The "Reference Text" contains the correct words and spelling. Use strictly these words.
-    2. **Alignment**: Listen to the audio to decide which part of the Reference Text belongs to which JSON segment (start/end).
-    3. **Structure & Timestamps**: 
-       - PRESERVE EXACT TIMESTAMP PRECISION. Do NOT round numbers. If input is 12.3456, output MUST be 12.3456.
-       - PRESERVE EXACT SPEAKER LABELS.
-       - The output JSON structure must match the input skeleton exactly.
-    4. **Missing/Extra**: If the Reference Text is missing something clearly audible in a segment, you may add it, but prioritize the Reference Text.
-    5. **Unintelligible**: If a segment has audio but no corresponding text in the Reference (and is unintelligible), use [unintelligible].
-    
-    Guidelines (for any edge cases):
-    ${guidelines}
+    STRICT RULES:
+    1. VERBATIM: Copy words from the "Reference Text" EXACTLY. Do not add or change words/numbers.
+    2. STRUCTURE: Return the JSON Skeleton exactly as is, but with "transcription" filled.
+    3. TIMESTAMPS: Do NOT change start/end times or speaker labels.
 
-    REFERENCE TEXT (GOLD STANDARD):
-    """
+    Reference Text (Correct Source):
     ${editedText}
-    """
 
-    JSON SKELETON:
-    \`\`\`json
+    JSON Skeleton (To Fill):
     ${jsonSkeleton}
-    \`\`\`
   `;
   
-  // Optimization: Use Schema to force structured output and reduce output tokens
-  const schema: Schema = {
-    type: Type.OBJECT,
-    properties: {
-      transcription_segments: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            start: { type: Type.NUMBER },
-            end: { type: Type.NUMBER },
-            speaker: { type: Type.STRING },
-            transcription: { type: Type.STRING },
-          },
-          required: ["start", "end", "speaker", "transcription"]
-        }
-      },
-      num_speakers: { type: Type.INTEGER },
-      duration: { type: Type.NUMBER }
-    },
-    // We make these optional in schema so the model can include them if they were in the input skeleton
-  };
+  // Removed strict Schema object to improve inference speed significantly.
+  // Gemini 3 Flash is capable of generating valid JSON without forced schema validation.
 
   const operation = async () => {
     // IMPORTANT: Get client inside operation to pick up the correct rotated key
@@ -257,19 +223,18 @@ export const alignJsonToAudioAndText = async (
       },
       config: {
         responseMimeType: "application/json",
-        responseSchema: schema
+        // Increased temperature slightly to prevent model from getting stuck on strict schema constraints
+        temperature: 0.3, 
       }
     });
 
     const text = response.text;
     if (!text) throw new Error("No aligned JSON generated.");
     
-    // Ensure pretty print output for the user
     try {
         const parsed = JSON.parse(text);
         return JSON.stringify(parsed, null, 2);
     } catch (e) {
-        // In case schema generation failed but text is present, return text as is
         return text;
     }
   };

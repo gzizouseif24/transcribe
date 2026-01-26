@@ -7,31 +7,26 @@ import { generateDraftTranscription, blobToBase64, alignJsonToAudioAndText } fro
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
-const DEFAULT_GUIDELINES = `Transcription Review Guidelines
-القاعدة الذهبية (The Golden Rule)
-«اكتب ما تسمعه بالضبط، لا ما تعتقد أنه يجب أن يقال».
+const DEFAULT_GUIDELINES = `STRICT TRANSCRIPTION RULES:
 
-1. اللهجات واللغات الأخرى:
-- لهجة أخرى: [other_dialect]
-- لغة أجنبية: [english] أو [foreign_language]
-- كلمات معربة دارجة (مثل "باص"، "فيسبوك"): تكتب بحروف عربية.
+1. VERBATIM MODE (CRITICAL):
+   - Write EXACTLY what is heard, word-for-word.
+   - Do NOT correct grammar. Do NOT summarize. Do NOT "fix" sentences.
+   - If they stutter, write the stutter.
 
-2. السكتات والهمهمات:
-- التكرار: اكتب الكلمة مكررة "أنا أنا".
-- الهمهمات القصيرة: تجاهلها.
-- السكتات: لا تكتب شيئًا.
+2. NUMBERS & DATES:
+   - ALWAYS use digits (Latin 0-9).
+   - Example: Write "15" (NOT "khamsa w ashra").
+   - Example: Write "1990" (NOT "alf w tes3a...").
 
-3. الموسيقى والغناء:
-- موسيقى فقط: [music]
-- غناء باللهجة: اكتب الكلمات (بدون مد حروف مثل "يا لييييل" -> "يا ليل").
+3. TAGS:
+   - [unintelligible] -> Cannot hear/understand.
+   - [music] -> Music playing.
+   - [foreign] -> Language other than Arabic/Derja.
 
-4. غير مفهوم:
-- ضوضاء تمنع الفهم: [unintelligible]
-- لا تخمن الكلمات أبدًا.
-
-5. الإملاء:
-- لا مسافة بعد الواو (والله).
-- صحح الأخطاء الإملائية الواضحة.
+4. SPELLING (Derja):
+   - Use standard Tunisian spelling conventions.
+   - No spaces after "Waw" (e.g., "والله" not "و الله").
 `;
 
 const App: React.FC = () => {
