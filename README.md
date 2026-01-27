@@ -37,15 +37,7 @@ This app follows a strict quality-control process:
     ```
 3.  **Environment Setup**:
     *   Get a Google Gemini API Key from [Google AI Studio](https://aistudio.google.com/).
-    *   Create a `.env` file in the project root:
-        ```
-        GEMINI_API_KEY=your_api_key_here
-        ```
-4.  **Run the development server**:
-    ```bash
-    npm run dev
-    ```
-    The app will be available at `http://localhost:3000`
+    *   Set the `API_KEY` environment variable in your runner or `.env` file.
 
 ## 💻 Tech Stack
 
@@ -66,6 +58,5 @@ You can modify the default transcription guidelines in `App.tsx` or dynamically 
 
 ## ⚠️ Requirements
 
-*   **API Key**: Requires a Gemini API key from [Google AI Studio](https://aistudio.google.com/).
+*   **API Key**: Requires a paid or free tier API key from Google Cloud/AI Studio.
 *   **Browser**: Modern browser with AudioContext support (Chrome, Edge, Firefox, Safari).
-*   **Node.js**: Version 18+ recommended.

@@ -12,7 +12,7 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFilesSelected, dis
       if (disabled) return;
       
       const files = Array.from(e.dataTransfer.files).filter((file: File) =>
-        file.type.startsWith('audio/')
+        file.type.startsWith('audio/') || file.name.endsWith('.json')
       );
       if (files.length > 0) {
         onFilesSelected(files);
@@ -28,7 +28,7 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFilesSelected, dis
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const files = Array.from(e.target.files).filter((file: File) =>
-        file.type.startsWith('audio/')
+        file.type.startsWith('audio/') || file.name.endsWith('.json')
       );
       onFilesSelected(files);
     }
@@ -48,7 +48,7 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFilesSelected, dis
       <input
         type="file"
         multiple
-        accept="audio/*"
+        accept="audio/*,.json"
         onChange={handleFileInput}
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
         disabled={disabled}
@@ -59,8 +59,8 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFilesSelected, dis
           <i className="fa-solid fa-cloud-arrow-up text-2xl"></i>
         </div>
         <div className="text-slate-600">
-          <p className="font-medium">Click to upload or drag and drop</p>
-          <p className="text-sm text-slate-400 mt-1">MP3, WAV, M4A (Batch processing supported)</p>
+          <p className="font-medium">Click to upload or drag & drop</p>
+          <p className="text-sm text-slate-400 mt-1">Audio files (MP3/WAV) + Matching JSON files</p>
         </div>
       </div>
     </div>

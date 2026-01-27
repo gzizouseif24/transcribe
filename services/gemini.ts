@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
+import { ValidationReport } from "../types";
 
 // --- API Key Rotation Logic ---
 let currentKeyIndex = 0;
@@ -8,15 +9,12 @@ const getApiKeys = (): string[] => {
   if (!envVar) {
     throw new Error("API Key is missing. Please check your environment configuration.");
   }
-  // Support multiple keys separated by comma for fallback/rotation strategies
   return envVar.split(',').map(k => k.trim()).filter(k => k);
 };
 
 const getAiClient = () => {
   const keys = getApiKeys();
   if (keys.length === 0) throw new Error("No valid API Keys found.");
-  
-  // Ensure index is within bounds
   const safeIndex = Math.min(currentKeyIndex, keys.length - 1);
   return new GoogleGenAI({ apiKey: keys[safeIndex] });
 };
@@ -31,56 +29,52 @@ const trySwitchToNextKey = (): boolean => {
   return false;
 };
 
-// 18MB limit to leave room for base64 overhead within standard request limits (20MB)
 const MAX_FILE_SIZE_BYTES = 18 * 1024 * 1024; 
 
-// Helper to convert Blob/File to Base64
 export const blobToBase64 = (blob: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
-    if (blob.size > MAX_FILE_SIZE_BYTES) {
-      reject(new Error(`File size (${(blob.size / 1024 / 1024).toFixed(2)}MB) exceeds the 18MB limit for client-side processing. Please compress the audio or split it.`));
+    if (!blob) {
+      reject(new Error("No file provided"));
       return;
     }
-
+    if (blob.size > MAX_FILE_SIZE_BYTES) {
+      reject(new Error(`File size (${(blob.size / 1024 / 1024).toFixed(2)}MB) exceeds the 18MB limit for client-side processing.`));
+      return;
+    }
     const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result as string;
-      // Remove data url prefix (e.g. "data:audio/mp3;base64,")
-      const base64 = result.split(',')[1];
-      resolve(base64);
+    
+    // Use onload instead of onloadend to ensure success
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === 'string') {
+        const parts = result.split(',');
+        if (parts.length > 1) {
+          resolve(parts[1]);
+        } else {
+          reject(new Error("Failed to encode audio: invalid data URL format"));
+        }
+      } else {
+        reject(new Error("Failed to read file as Data URL"));
+      }
     };
-    reader.onerror = reject;
+    
+    reader.onerror = () => {
+      reject(reader.error || new Error("Unknown FileReader error"));
+    };
+    
     reader.readAsDataURL(blob);
   });
 };
 
-/**
- * Ensures the MIME type is one of the standard types supported by Gemini.
- * Maps common browser variations or raw types to standard containers.
- */
 const normalizeMimeType = (mimeType: string): string => {
-  const lower = mimeType.toLowerCase();
-  
-  // WAV variations
+  const lower = (mimeType || '').toLowerCase(); // Guard against null/undefined
   if (lower.includes('wav') || lower === 'audio/s16le') return 'audio/wav';
-  
-  // MP3 variations
   if (lower === 'audio/mpeg3' || lower === 'audio/x-mpeg-3') return 'audio/mp3';
-  
-  // M4A/AAC variations (Gemini handles audio/mp4 or audio/aac)
   if (lower === 'audio/x-m4a' || lower === 'audio/m4a') return 'audio/mp4';
-  
-  // OGG
   if (lower === 'audio/x-ogg') return 'audio/ogg';
-
-  return mimeType;
+  return mimeType || 'audio/mp3';
 };
 
-/**
- * Generic Retry Utility for API calls with Key Rotation Support.
- * Retries on 429 (Too Many Requests) and 503 (Service Unavailable).
- * Switches API Key on 429/403 if alternatives are available.
- */
 async function retryWithBackoff<T>(
   operation: () => Promise<T>, 
   retries = 3, 
@@ -92,126 +86,142 @@ async function retryWithBackoff<T>(
   } catch (error: any) {
     const status = error?.status || error?.response?.status;
     const message = error?.message || "";
-    
-    // Detect Quota/Rate Limit Errors
     const isRateLimit = status === 429 || message.includes("resource exhausted") || message.includes("429");
-    const isQuotaError = status === 403 || message.includes("quota"); // Sometimes quota errors come as 403
+    const isQuotaError = status === 403 || message.includes("quota");
     
-    // Strategy 1: Switch Key if possible (Immediate Retry)
     if ((isRateLimit || isQuotaError) && trySwitchToNextKey()) {
-       // Reset retries for the new key, or keep diminishing? 
-       // We keep diminishing to avoid infinite loops, but do it immediately (no delay).
        return retryWithBackoff(operation, retries, 0, factor); 
     }
 
-    // Strategy 2: Standard Backoff
     const isTransientError = isRateLimit || status === 503 || message.includes("Overloaded");
-
     if (retries > 0 && isTransientError) {
-      console.warn(`API Overloaded/Limited. Retrying in ${delay}ms... (${retries} retries left)`);
       await new Promise(resolve => setTimeout(resolve, delay));
       return retryWithBackoff(operation, retries - 1, delay * factor, factor);
     }
-    
     throw error;
   }
 }
 
-/**
- * Step 1: Transcribe using Gemini 3 Flash (Combined Transcription + Formatting)
- * optimization: Reduces token usage by doing 1 pass instead of 2.
- */
-export const generateDraftTranscription = async (
-  base64Audio: string, 
-  mimeType: string,
-  guidelines: string
-): Promise<string> => {
-  const modelId = "gemini-3-flash-preview";
-  const safeMimeType = normalizeMimeType(mimeType);
+// --- HELPER: Deterministic Math Checks ---
+const runDeterministicChecks = (segments: any[]): string[] => {
+  const errors: string[] = [];
+  if (!segments || segments.length < 1) return ["JSON is empty or has no segments."];
 
-  const prompt = `
-    SYSTEM ROLE: You are a strict, verbatim transcriber for Tunisian Arabic (Derja).
+  for (let i = 0; i < segments.length; i++) {
+    const current = segments[i];
+    const next = segments[i + 1];
 
-    RULES:
-    1. WRITE EXACTLY WHAT YOU HEAR. Do not hallucinate. Do not "fix" grammar.
-    2. NUMBERS: ALWAYS use digits (e.g., "5", "1990"). NEVER write numbers as words.
-    3. Output as a single, unformatted paragraph.
-
-    USER GUIDELINES (APPLY THESE):
-    ${guidelines}
-
-    Output only the transcription text.
-  `;
-
-  const operation = async () => {
-    // IMPORTANT: Get client inside operation to pick up the correct rotated key
-    const ai = getAiClient();
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: {
-        parts: [
-          { inlineData: { mimeType: safeMimeType, data: base64Audio } },
-          { text: prompt }
-        ]
-      },
-      // Lower temperature to reduce hallucinations/creativity
-      config: {
-        temperature: 0.2, 
-        topP: 0.95,
-      }
-    });
-    const text = response.text;
-    if (!text) throw new Error("No transcription generated.");
-    return text.trim();
-  };
-
-  try {
-    return await retryWithBackoff(operation);
-  } catch (error: any) {
-    console.error("Transcription error:", error);
-    if (error.toString().includes("xhr error") || error.toString().includes("Rpc failed")) {
-        throw new Error("Network error: The audio file might be too large for Gemini 3 Flash. Try a shorter clip or use a compressed format.");
+    // 1. Basic Structure
+    if (typeof current.end !== 'number' || typeof current.start !== 'number') {
+        errors.push(`Segment #${i}: Missing start or end timestamp.`);
+        continue;
     }
-    throw error;
+
+    // 2. Negative/Zero Duration
+    const duration = current.end - current.start;
+    if (duration <= 0) {
+        errors.push(`Segment #${i}: Invalid duration (${duration.toFixed(3)}s). End time must be greater than Start time.`);
+    }
+
+    // 3. Unrealistic Duration (Physical impossibility)
+    // Rule: "Long sentence in 0.2 seconds"
+    // Heuristic: If text is provided, check chars per second. Limit: ~25 chars/sec is extremely fast speech.
+    const text = current.transcription || current.text || "";
+    if (text.length > 0 && duration > 0) {
+        const charsPerSec = text.length / duration;
+        if (charsPerSec > 35) { // Very loose threshold to avoid false positives on short words
+            errors.push(`Unrealistic Duration (Segment #${i}): Text is too long (${text.length} chars) for duration (${duration.toFixed(2)}s).`);
+        }
+    } else if (duration < 0.1) {
+        // Even without text, < 0.1s is suspicious for speech
+        errors.push(`Unrealistic Duration (Segment #${i}): Segment is too short (${duration.toFixed(3)}s) to contain meaningful speech.`);
+    }
+
+    // 4. Timestamp Overlap
+    // Rule: "Multiple segments share the same time range"
+    if (next && typeof next.start === 'number') {
+        if (current.end > next.start) {
+             const overlap = current.end - next.start;
+             // 20ms tolerance for minor floating point issues
+             if (overlap > 0.02) {
+                 errors.push(`Timestamp Overlap: Segment #${i} ends at ${current.end.toFixed(2)}s, but Segment #${i+1} starts at ${next.start.toFixed(2)}s.`);
+             }
+        }
+    }
   }
+  return errors;
 };
 
 /**
- * Step 2: Align Edited Text to JSON Skeleton
- * Uses Audio + Edited Text + JSON Skeleton -> Final JSON
+ * STEP 1: VALIDATION
  */
-export const alignJsonToAudioAndText = async (
-  base64Audio: string, 
-  mimeType: string, 
-  editedText: string,
-  jsonSkeleton: string,
-  guidelines: string
-): Promise<string> => {
+export const validateJsonWithAudio = async (
+  base64Audio: string,
+  mimeType: string,
+  jsonSkeleton: string
+): Promise<ValidationReport> => {
   const modelId = "gemini-3-flash-preview";
   const safeMimeType = normalizeMimeType(mimeType);
 
-  // Simplified prompt to reduce input tokens and processing time
-  const prompt = `
-    ROLE: You are an audio-to-text aligner.
-    TASK: Fill the "transcription" fields in the provided JSON Skeleton using the Reference Text.
-
-    STRICT RULES:
-    1. VERBATIM: Copy words from the "Reference Text" EXACTLY. Do not add or change words/numbers.
-    2. STRUCTURE: Return the JSON Skeleton exactly as is, but with "transcription" filled.
-    3. TIMESTAMPS: Do NOT change start/end times or speaker labels.
-
-    Reference Text (Correct Source):
-    ${editedText}
-
-    JSON Skeleton (To Fill):
-    ${jsonSkeleton}
-  `;
+  let parsedSkeleton: any;
+  try {
+     parsedSkeleton = JSON.parse(jsonSkeleton);
+  } catch (e) {
+     return { isValid: false, errors: ["Invalid JSON Syntax"], warnings: [], stats: { audioSpeakerCount: 0, jsonSpeakerCount: 0, segmentCount: 0 }};
+  }
   
-  // Removed strict Schema object to improve inference speed significantly.
-  // Gemini 3 Flash is capable of generating valid JSON without forced schema validation.
+  let segments: any[] = [];
+  if (Array.isArray(parsedSkeleton)) segments = parsedSkeleton;
+  else if (parsedSkeleton.segments) segments = parsedSkeleton.segments;
+  else if (parsedSkeleton.transcription_segments) segments = parsedSkeleton.transcription_segments;
+  
+  // 1. Run Deterministic Math Checks (Overlaps, Speed, Duration)
+  const mathErrors = runDeterministicChecks(segments);
+
+  const distinctJsonSpeakers = new Set(segments.map((s: any) => s.speaker)).size;
+
+  const prompt = `
+  ROLE: Expert Audio Alignment QA (Derja).
+  TASK: Validate the structural integrity of the JSON timestamps against the Audio.
+  
+  CRITICAL INSTRUCTION: 
+  DO NOT VALIDATE TRANSCRIPTION ACCURACY. Ignore typos, spelling errors, or wrong words.
+  ONLY Fail validation for the following structural/temporal errors:
+
+  1. **Timestamp Misalignment**: 
+     - Does the segment start too early or end too late compared to the audio wave?
+     - Are the boundaries loose?
+     
+  2. **Missing Segment**: 
+     - Is there clear human speech in the audio that has NO corresponding JSON segment?
+     
+  3. **Phantom Segment**: 
+     - Does a segment exist in the JSON where the audio is just silence, noise, or music? (No speech).
+
+  4. **Speaker Misattribution**: 
+     - Is the Speaker ID (e.g., SPEAKER_01) consistent? Does the voice change without the ID changing?
+     
+  5. **Speaker Count Mismatch**: 
+     - The JSON implies ${distinctJsonSpeakers} speakers. Does the audio actually contain ${distinctJsonSpeakers} distinct voices?
+
+  INPUT JSON (First 100 segments):
+  ${JSON.stringify(segments.slice(0, 100))}
+
+  OUTPUT SCHEMA (JSON):
+  {
+    "isValid": boolean, 
+    "errors": [
+      "Missing Segment at 00:45",
+      "Phantom Segment at #5 (Silence)", 
+      "Speaker Mismatch at #12 (Voice changed)",
+      "Misalignment at #3 (Starts too early)"
+    ], 
+    "warnings": string[], 
+    "audioSpeakerCount": number
+  }
+  `;
 
   const operation = async () => {
-    // IMPORTANT: Get client inside operation to pick up the correct rotated key
     const ai = getAiClient();
     const response = await ai.models.generateContent({
       model: modelId,
@@ -223,26 +233,138 @@ export const alignJsonToAudioAndText = async (
       },
       config: {
         responseMimeType: "application/json",
-        // Increased temperature slightly to prevent model from getting stuck on strict schema constraints
-        temperature: 0.3, 
+        temperature: 0.0, // Strict determinism
       }
     });
 
     const text = response.text;
-    if (!text) throw new Error("No aligned JSON generated.");
+    if (!text) throw new Error("No validation report generated.");
     
     try {
-        const parsed = JSON.parse(text);
-        return JSON.stringify(parsed, null, 2);
+        const result = JSON.parse(text);
+        
+        // Merge AI errors with Math errors
+        const combinedErrors = [...mathErrors, ...(result.errors || [])];
+        // Only valid if both checks pass
+        const isValid = combinedErrors.length === 0;
+
+        return {
+            isValid: isValid,
+            errors: combinedErrors,
+            warnings: result.warnings || [],
+            stats: {
+                audioSpeakerCount: result.audioSpeakerCount || 0,
+                jsonSpeakerCount: distinctJsonSpeakers,
+                segmentCount: segments.length
+            }
+        };
     } catch (e) {
-        return text;
+        throw new Error("Failed to parse validation report.");
     }
   };
 
+  return await retryWithBackoff(operation);
+};
+
+/**
+ * STEP 2: GENERATE DRAFT (Streaming)
+ */
+export const generateDraftTranscription = async (
+  base64Audio: string, 
+  mimeType: string,
+  guidelines: string,
+  onProgress?: (text: string) => void
+): Promise<string> => {
+  const modelId = "gemini-3-flash-preview";
+  const safeMimeType = normalizeMimeType(mimeType);
+
+  const prompt = `
+    SYSTEM ROLE: Transcriber for Tunisian Arabic (Derja).
+    TASK: Transcribe the audio verbatim. 
+    FORMAT: Single paragraph.
+    GUIDELINES: ${guidelines}
+  `;
+
   try {
-    return await retryWithBackoff(operation);
-  } catch (error) {
-    console.error("Alignment error:", error);
-    return JSON.stringify({ error: "Failed to align JSON", details: String(error) }, null, 2);
+      const ai = getAiClient();
+      const responseStream = await ai.models.generateContentStream({
+        model: modelId,
+        contents: {
+          parts: [
+            { inlineData: { mimeType: safeMimeType, data: base64Audio } },
+            { text: prompt }
+          ]
+        },
+        config: { temperature: 0.2 }
+      });
+
+      let fullTranscript = "";
+      for await (const chunk of responseStream) {
+          const chunkText = chunk.text;
+          if (chunkText) {
+              fullTranscript += chunkText;
+              if (onProgress) onProgress(fullTranscript);
+          }
+      }
+      return fullTranscript;
+  } catch (error: any) {
+      if (error.toString().includes("xhr error") || error.toString().includes("Rpc failed")) {
+        throw new Error("Network error during transcription.");
+      }
+      throw error;
   }
+};
+
+/**
+ * STEP 3: ALIGN (Text -> JSON)
+ */
+export const alignJsonToAudioAndText = async (
+    base64Audio: string, 
+    mimeType: string, 
+    referenceText: string,
+    jsonSkeleton: string
+  ): Promise<string> => {
+    const modelId = "gemini-3-flash-preview";
+    let originalJsonObj = JSON.parse(jsonSkeleton);
+    let segmentsToAlign: any[] = [];
+    
+    if (Array.isArray(originalJsonObj)) segmentsToAlign = originalJsonObj;
+    else if (originalJsonObj.transcription_segments) segmentsToAlign = originalJsonObj.transcription_segments;
+    else if (originalJsonObj.segments) segmentsToAlign = originalJsonObj.segments;
+    else throw new Error("Invalid JSON structure");
+  
+    const indexedSegments = segmentsToAlign.map((seg, idx) => ({ _index: idx, start: seg.start, end: seg.end, speaker: seg.speaker }));
+    const contextJson = JSON.stringify(indexedSegments);
+  
+    const prompt = `
+      ROLE: Alignment Engine.
+      TASK: Distribute the "Reference Text" into the "Segments List".
+      OUTPUT: JSON Array of objects [{ "_index": 0, "transcription": "..." }].
+      
+      Reference Text:
+      ${referenceText}
+  
+      Segments List:
+      ${contextJson}
+    `;
+    
+    const operation = async () => {
+        const ai = getAiClient();
+        const response = await ai.models.generateContent({
+            model: modelId,
+            contents: { parts: [{ inlineData: { mimeType: normalizeMimeType(mimeType), data: base64Audio } }, { text: prompt }] },
+            config: { responseMimeType: "application/json", temperature: 0.1 }
+        });
+        
+        const minimalOutput = JSON.parse(response.text || "[]");
+        if (!Array.isArray(minimalOutput)) throw new Error("AI returned invalid alignment format.");
+
+        for (let i = 0; i < segmentsToAlign.length; i++) {
+            const match = minimalOutput.find((item: any) => item._index === i);
+            segmentsToAlign[i].transcription = match ? match.transcription : "";
+        }
+        return JSON.stringify(originalJsonObj, null, 2);
+    };
+
+    return await retryWithBackoff(operation);
 };
