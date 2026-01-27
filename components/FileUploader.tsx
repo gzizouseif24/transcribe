@@ -40,8 +40,8 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFilesSelected, dis
       onDragOver={handleDragOver}
       className={`relative group border-2 border-dashed rounded-xl p-8 text-center transition-all duration-200 
         ${disabled 
-          ? 'border-slate-200 bg-slate-50 cursor-not-allowed' 
-          : 'border-indigo-300 bg-white hover:border-indigo-500 hover:bg-indigo-50/50 cursor-pointer'
+          ? 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 cursor-not-allowed' 
+          : 'border-indigo-300 dark:border-indigo-700 bg-white dark:bg-slate-800 hover:border-indigo-500 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/20 cursor-pointer'
         }
       `}
     >
@@ -55,12 +55,12 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFilesSelected, dis
       />
       
       <div className="flex flex-col items-center justify-center space-y-3 pointer-events-none">
-        <div className={`p-4 rounded-full ${disabled ? 'bg-slate-100 text-slate-300' : 'bg-indigo-100 text-indigo-600 group-hover:bg-indigo-200 transition-colors'}`}>
+        <div className={`p-4 rounded-full ${disabled ? 'bg-slate-100 dark:bg-slate-700 text-slate-300 dark:text-slate-500' : 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 group-hover:bg-indigo-200 dark:group-hover:bg-indigo-900 transition-colors'}`}>
           <i className="fa-solid fa-cloud-arrow-up text-2xl"></i>
         </div>
-        <div className="text-slate-600">
+        <div className="text-slate-600 dark:text-slate-300">
           <p className="font-medium">Click to upload or drag & drop</p>
-          <p className="text-sm text-slate-400 mt-1">Audio files (MP3/WAV) + Matching JSON files</p>
+          <p className="text-sm text-slate-400 dark:text-slate-500 mt-1">Audio files (MP3/WAV) + Matching JSON files</p>
         </div>
       </div>
     </div>
