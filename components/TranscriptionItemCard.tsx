@@ -119,7 +119,7 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
       <div className="p-4 space-y-6">
         {/* Audio Controls */}
         <div className="flex items-center space-x-3 bg-slate-50 dark:bg-slate-900/50 p-2 rounded-lg border border-slate-100 dark:border-slate-700">
-          <button onClick={togglePlay} className="w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center transition-colors">
+          <button onClick={togglePlay} className="w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center transition-colors shrink-0">
              <i className={`fa-solid ${isPlaying ? 'fa-pause' : 'fa-play'} text-xs`}></i>
           </button>
           <input type="range" min="0" max={duration || 0} value={currentTime} onChange={(e) => {
@@ -127,7 +127,24 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
             setCurrentTime(t);
             if(audioRef.current) audioRef.current.currentTime = t;
           }} className="flex-1 h-1 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
-          <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400">{formatTime(currentTime)} / {formatTime(duration)}</span>
+          
+          <div className="flex items-center space-x-2 shrink-0">
+             <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 min-w-[60px] text-right">{formatTime(currentTime)} / {formatTime(duration)}</span>
+             
+             <div className="h-3 w-px bg-slate-300 dark:bg-slate-600 mx-1"></div>
+             
+             <select
+                value={playbackRate}
+                onChange={(e) => setPlaybackRate(parseFloat(e.target.value))}
+                className="bg-transparent text-[10px] font-mono font-medium text-slate-600 dark:text-slate-300 focus:outline-none cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 p-0 border-none ring-0"
+              >
+                {[0.5, 0.75, 1, 1.25, 1.5, 2].map(rate => (
+                  <option key={rate} value={rate} className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">
+                    {rate}x
+                  </option>
+                ))}
+              </select>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
