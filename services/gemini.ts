@@ -158,9 +158,9 @@ const runDeterministicChecks = (segments: any[]): string[] => {
 export const validateJsonWithAudio = async (
   base64Audio: string,
   mimeType: string,
-  jsonSkeleton: string
+  jsonSkeleton: string,
+  modelId: string
 ): Promise<ValidationReport> => {
-  const modelId = "gemini-3-flash-preview";
   const safeMimeType = normalizeMimeType(mimeType);
 
   let parsedSkeleton: any;
@@ -273,9 +273,9 @@ export const generateDraftTranscription = async (
   base64Audio: string, 
   mimeType: string,
   guidelines: string,
+  modelId: string,
   onProgress?: (text: string) => void
 ): Promise<string> => {
-  const modelId = "gemini-3-flash-preview";
   const safeMimeType = normalizeMimeType(mimeType);
 
   const prompt = `
@@ -322,9 +322,9 @@ export const alignJsonToAudioAndText = async (
     base64Audio: string, 
     mimeType: string, 
     referenceText: string,
-    jsonSkeleton: string
+    jsonSkeleton: string,
+    modelId: string
   ): Promise<string> => {
-    const modelId = "gemini-3-flash-preview";
     let originalJsonObj = JSON.parse(jsonSkeleton);
     let segmentsToAlign: any[] = [];
     

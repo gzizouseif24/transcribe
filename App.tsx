@@ -63,6 +63,10 @@ const App: React.FC = () => {
 
   // --- SINGLE ITEM ACTIONS ---
 
+  const handleModelChange = (id: string, model: string) => {
+    setItems(prev => prev.map(i => i.id === id ? { ...i, model } : i));
+  };
+
   const handleValidate = async (id: string) => {
     const item = items.find(i => i.id === id);
     if (!item || !item.inputJson) return; // Silent return for batch safe calls
@@ -70,7 +74,7 @@ const App: React.FC = () => {
     setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.VALIDATING_JSON, error: undefined } : i));
     try {
       const base64Audio = await blobToBase64(item.file);
-      const report = await validateJsonWithAudio(base64Audio, item.mimeType, item.inputJson);
+      const report = await validateJsonWithAudio(base64Audio, item.mimeType, item.inputJson, item.model);
       setItems(prev => prev.map(i => i.id === id ? { 
         ...i, 
         status: report.isValid ? ProcessingStatus.READY_TO_TRANSCRIBE : ProcessingStatus.ERROR,
@@ -91,7 +95,7 @@ const App: React.FC = () => {
       const onProgress = (text: string) => {
          setItems(prev => prev.map(i => i.id === id ? { ...i, finalTranscription: text } : i));
       };
-      const text = await generateDraftTranscription(base64Audio, item.mimeType, DEFAULT_GUIDELINES, onProgress);
+      const text = await generateDraftTranscription(base64Audio, item.mimeType, DEFAULT_GUIDELINES, item.model, onProgress);
       setItems(prev => prev.map(i => i.id === id ? { 
         ...i, 
         status: ProcessingStatus.TEXT_READY,
@@ -108,7 +112,7 @@ const App: React.FC = () => {
     setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.ALIGNING } : i));
     try {
       const base64Audio = await blobToBase64(item.file);
-      const finalJson = await alignJsonToAudioAndText(base64Audio, item.mimeType, item.finalTranscription, item.inputJson);
+      const finalJson = await alignJsonToAudioAndText(base64Audio, item.mimeType, item.finalTranscription, item.inputJson, item.model);
       setItems(prev => prev.map(i => i.id === id ? { 
         ...i, 
         status: ProcessingStatus.COMPLETED,
@@ -184,7 +188,8 @@ const App: React.FC = () => {
       previewUrl: URL.createObjectURL(file),
       status: ProcessingStatus.IDLE,
       inputJson: '',
-      addedAt: Date.now()
+      addedAt: Date.now(),
+      model: 'gemini-3-flash-preview' // Default Model
     }));
 
     // Update state with new audio items first
@@ -300,6 +305,7 @@ const App: React.FC = () => {
                onTranscribeDraft={handleTranscribeDraft}
                onUpdateDraftText={handleUpdateDraftText}
                onAlignJson={handleAlignJson}
+               onModelChange={handleModelChange}
              />
            ))}
         </div>

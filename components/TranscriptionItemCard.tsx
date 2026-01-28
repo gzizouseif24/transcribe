@@ -9,6 +9,7 @@ interface TranscriptionItemCardProps {
   onTranscribeDraft: (id: string) => void; // Generates Text
   onUpdateDraftText: (id: string, text: string) => void; // Updates Text
   onAlignJson: (id: string) => void; // Merges Text to JSON
+  onModelChange: (id: string, model: string) => void; // New Prop
 }
 
 export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({ 
@@ -18,7 +19,8 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
   onValidate,
   onTranscribeDraft,
   onUpdateDraftText,
-  onAlignJson
+  onAlignJson,
+  onModelChange
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
@@ -109,9 +111,28 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
             <p className="text-xs text-slate-500 dark:text-slate-400">{new Date(item.addedAt).toLocaleTimeString()}</p>
           </div>
         </div>
-        <button onClick={() => onRemove(item.id)} className="text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 p-2 transition-colors">
-          <i className="fa-solid fa-trash-can"></i>
-        </button>
+        
+        <div className="flex items-center space-x-3">
+          <div className="relative">
+            <select
+                value={item.model}
+                onChange={(e) => onModelChange(item.id, e.target.value)}
+                disabled={isProcessing}
+                className="appearance-none pl-3 pr-8 py-1.5 text-xs font-medium bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 hover:border-indigo-300 dark:hover:border-indigo-600 disabled:opacity-50 cursor-pointer transition-colors"
+                title="Select AI Model"
+            >
+                <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
+                <option value="gemini-3-pro-preview">Gemini 3 Pro</option>
+            </select>
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                <i className="fa-solid fa-chevron-down text-[10px]"></i>
+            </div>
+          </div>
+          
+          <button onClick={() => onRemove(item.id)} className="text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 p-2 transition-colors" title="Remove Item">
+            <i className="fa-solid fa-trash-can"></i>
+          </button>
+        </div>
       </div>
 
       <audio ref={audioRef} src={item.previewUrl} onTimeUpdate={handleTimeUpdate} onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)} className="hidden" />

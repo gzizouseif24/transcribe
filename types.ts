@@ -33,6 +33,7 @@ export interface TranscriptionItem {
   jsonOutput?: string;
   error?: string;
   addedAt: number;
+  model: string;
 }
 
 export interface ProcessingStats {
