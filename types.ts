@@ -1,11 +1,11 @@
 export enum ProcessingStatus {
-  IDLE = 'IDLE',                         // File selected, waiting for JSON input
-  VALIDATING_JSON = 'VALIDATING_JSON',   // Step 1: AI Checking JSON vs Audio
-  READY_TO_TRANSCRIBE = 'READY_TO_TRANSCRIBE', // Validation passed, ready to generate draft
-  TRANSCRIBING = 'TRANSCRIBING',         // Step 2: Generating text
-  TEXT_READY = 'TEXT_READY',             // Step 3: Text generated, User Editing
-  ALIGNING = 'ALIGNING',                 // Step 4: Merging Edited Text into JSON
-  COMPLETED = 'COMPLETED',               // All done
+  IDLE = 'IDLE',                         
+  VALIDATING_JSON = 'VALIDATING_JSON',   
+  READY_TO_TRANSCRIBE = 'READY_TO_TRANSCRIBE', 
+  TRANSCRIBING = 'TRANSCRIBING',         
+  TEXT_READY = 'TEXT_READY',             
+  ALIGNING = 'ALIGNING',                 
+  COMPLETED = 'COMPLETED',               
   ERROR = 'ERROR',
 }
 
@@ -13,6 +13,7 @@ export interface ValidationReport {
   isValid: boolean;
   errors: string[];
   warnings: string[];
+  auditorNotes?: string[]; // Hallucinations caught by the second agent
   stats: {
     audioSpeakerCount: number;
     jsonSpeakerCount: number;
@@ -27,9 +28,9 @@ export interface TranscriptionItem {
   mimeType: string;
   previewUrl: string;
   status: ProcessingStatus;
-  inputJson: string; // Mandatory for validation
+  inputJson: string; 
   validationReport?: ValidationReport;
-  finalTranscription?: string; // The text content (editable)
+  finalTranscription?: string; 
   jsonOutput?: string;
   error?: string;
   addedAt: number;

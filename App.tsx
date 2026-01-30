@@ -5,71 +5,32 @@ import { TranscriptionItem, ProcessingStatus } from './types';
 import { blobToBase64, validateJsonWithAudio, generateDraftTranscription, alignJsonToAudioAndText } from './services/gemini';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
-
-const DEFAULT_GUIDELINES = `STRICT TRANSCRIPTION RULES:
-1. VERBATIM MODE: Write EXACTLY what is heard.
-2. NUMBERS: ALWAYS use digits (e.g., "5", "1990").
-3. TAGS: [unintelligible], [music], [foreign].
-4. SPELLING (Derja): Use standard Tunisian spelling conventions.
-`;
+const DEFAULT_GUIDELINES = `STRICT VERBATIM: Tunisian Derja spelling. Use digits for numbers. Tags: [unintelligible], [music].`;
 
 const App: React.FC = () => {
   const [items, setItems] = useState<TranscriptionItem[]>([]);
   const [hasApiKey, setHasApiKey] = useState(false);
-  const [isCheckingKey, setIsCheckingKey] = useState(true);
-  const [darkMode, setDarkMode] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('theme') === 'dark' ||
-        (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    }
-    return false;
-  });
-
-  useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-    }
-  }, [darkMode]);
+  const [batchProgress, setBatchProgress] = useState<{current: number, total: number} | null>(null);
+  const [darkMode, setDarkMode] = useState(true);
 
   useEffect(() => {
     const checkKey = async () => {
-      if (window.aistudio) {
-        const hasKey = await window.aistudio.hasSelectedApiKey();
-        setHasApiKey(hasKey);
-      } else {
-        setHasApiKey(true);
-      }
-      setIsCheckingKey(false);
+      const hasKey = window.aistudio ? await window.aistudio.hasSelectedApiKey() : true;
+      setHasApiKey(hasKey);
     };
     checkKey();
   }, []);
 
   const handleSelectKey = async () => {
     if (window.aistudio) {
-      try {
-        await window.aistudio.openSelectKey();
-        setHasApiKey(true);
-      } catch (e) {
-        alert("Failed to select API key.");
-      }
-    } else {
-      alert("API Key selection not available.");
+      await window.aistudio.openSelectKey();
+      setHasApiKey(true);
     }
-  };
-
-  // --- SINGLE ITEM ACTIONS ---
-
-  const handleModelChange = (id: string, model: string) => {
-    setItems(prev => prev.map(i => i.id === id ? { ...i, model } : i));
   };
 
   const handleValidate = async (id: string) => {
     const item = items.find(i => i.id === id);
-    if (!item || !item.inputJson) return; // Silent return for batch safe calls
+    if (!item || !item.inputJson) return;
     
     setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.VALIDATING_JSON, error: undefined } : i));
     try {
@@ -78,11 +39,10 @@ const App: React.FC = () => {
       setItems(prev => prev.map(i => i.id === id ? { 
         ...i, 
         status: report.isValid ? ProcessingStatus.READY_TO_TRANSCRIBE : ProcessingStatus.ERROR,
-        validationReport: report,
-        error: report.isValid ? undefined : "Validation failed. Please fix JSON."
+        validationReport: report
       } : i));
-    } catch (error: any) {
-      setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.ERROR, error: error.message } : i));
+    } catch (e: any) {
+      setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.ERROR, error: e.message } : i));
     }
   };
 
@@ -92,17 +52,12 @@ const App: React.FC = () => {
     setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.TRANSCRIBING } : i));
     try {
       const base64Audio = await blobToBase64(item.file);
-      const onProgress = (text: string) => {
-         setItems(prev => prev.map(i => i.id === id ? { ...i, finalTranscription: text } : i));
-      };
-      const text = await generateDraftTranscription(base64Audio, item.mimeType, DEFAULT_GUIDELINES, item.model, onProgress);
-      setItems(prev => prev.map(i => i.id === id ? { 
-        ...i, 
-        status: ProcessingStatus.TEXT_READY,
-        finalTranscription: text 
-      } : i));
-    } catch (error: any) {
-      setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.ERROR, error: error.message } : i));
+      const text = await generateDraftTranscription(base64Audio, item.mimeType, DEFAULT_GUIDELINES, item.model, (t) => {
+         setItems(prev => prev.map(i => i.id === id ? { ...i, finalTranscription: t } : i));
+      });
+      setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.TEXT_READY, finalTranscription: text } : i));
+    } catch (e: any) {
+      setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.ERROR, error: e.message } : i));
     }
   };
 
@@ -113,74 +68,37 @@ const App: React.FC = () => {
     try {
       const base64Audio = await blobToBase64(item.file);
       const finalJson = await alignJsonToAudioAndText(base64Audio, item.mimeType, item.finalTranscription, item.inputJson, item.model);
-      setItems(prev => prev.map(i => i.id === id ? { 
-        ...i, 
-        status: ProcessingStatus.COMPLETED,
-        jsonOutput: finalJson
-      } : i));
-    } catch (error: any) {
-      setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.ERROR, error: error.message } : i));
+      setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.COMPLETED, jsonOutput: finalJson } : i));
+    } catch (e: any) {
+      setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.ERROR, error: e.message } : i));
     }
   };
 
-  const handleUpdateDraftText = (id: string, text: string) => {
-    setItems(prev => prev.map(i => i.id === id ? { ...i, finalTranscription: text } : i));
+  // --- BATCH RUNNERS (SEQUENTIAL FOR EFFICIENCY) ---
+  const runSequential = async (targetItems: TranscriptionItem[], action: (id: string) => Promise<void>) => {
+    setBatchProgress({ current: 0, total: targetItems.length });
+    let count = 0;
+    for (const item of targetItems) {
+      await action(item.id);
+      count++;
+      setBatchProgress({ current: count, total: targetItems.length });
+    }
+    setTimeout(() => setBatchProgress(null), 2000);
   };
-  const handleUpdateJson = (id: string, json: string) => {
-    setItems(prev => prev.map(i => i.id === id ? { ...i, inputJson: json, status: ProcessingStatus.IDLE, validationReport: undefined } : i));
-  };
-  const handleRemoveItem = (id: string) => setItems(prev => prev.filter(item => item.id !== id));
-  
-  // --- BATCH ACTIONS ---
 
   const handleBatchValidate = () => {
-    items.forEach(item => {
-        if ((item.status === ProcessingStatus.IDLE || item.status === ProcessingStatus.ERROR) && item.inputJson) {
-            handleValidate(item.id);
-        }
-    });
+    const targets = items.filter(i => (i.status === ProcessingStatus.IDLE || i.status === ProcessingStatus.ERROR) && i.inputJson);
+    runSequential(targets, handleValidate);
   };
 
   const handleBatchDraft = () => {
-    items.forEach(item => {
-        if (item.status === ProcessingStatus.READY_TO_TRANSCRIBE) {
-            handleTranscribeDraft(item.id);
-        }
-    });
+    const targets = items.filter(i => i.status === ProcessingStatus.READY_TO_TRANSCRIBE);
+    runSequential(targets, handleTranscribeDraft);
   };
-
-  const handleBatchAlign = () => {
-    items.forEach(item => {
-        if (item.status === ProcessingStatus.TEXT_READY) {
-            handleAlignJson(item.id);
-        }
-    });
-  };
-
-  const handleBatchDownload = () => {
-    items.forEach(item => {
-        if (item.status === ProcessingStatus.COMPLETED && item.jsonOutput) {
-            const blob = new Blob([item.jsonOutput], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${item.fileName.replace(/\.[^/.]+$/, "")}_transcribed.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        }
-    });
-  };
-
-  // --- FILE HANDLING & MATCHING ---
 
   const handleFilesSelected = async (files: File[]) => {
     const audioFiles = files.filter(f => f.type.startsWith('audio/'));
-    const jsonFiles = files.filter(f => f.name.endsWith('.json'));
-
-    // 1. Add Audio Files
-    const newItems: TranscriptionItem[] = audioFiles.map(file => ({
+    const newItems = audioFiles.map(file => ({
       id: generateId(),
       file,
       fileName: file.name,
@@ -189,125 +107,69 @@ const App: React.FC = () => {
       status: ProcessingStatus.IDLE,
       inputJson: '',
       addedAt: Date.now(),
-      model: 'gemini-3-flash-preview' // Default Model
+      model: 'gemini-3-flash-preview'
     }));
-
-    // Update state with new audio items first
-    let currentItems = [...newItems, ...items];
-    
-    // 2. Process JSON files and match to Audio
-    for (const jsonFile of jsonFiles) {
-        const text = await jsonFile.text();
-        const jsonNameBase = jsonFile.name.replace(/\.[^/.]+$/, "").toLowerCase(); // remove extension
-        
-        // Find matching audio item (by filename ignoring extension)
-        const matchIndex = currentItems.findIndex(item => {
-            const audioNameBase = item.fileName.replace(/\.[^/.]+$/, "").toLowerCase();
-            return audioNameBase === jsonNameBase;
-        });
-
-        if (matchIndex !== -1) {
-            // Update the matched item with the JSON content
-            currentItems[matchIndex] = {
-                ...currentItems[matchIndex],
-                inputJson: text,
-                status: ProcessingStatus.IDLE // Reset to IDLE so it can be validated
-            };
-        }
-    }
-    
-    setItems(currentItems);
+    setItems(prev => [...newItems, ...prev]);
   };
 
-  // Counts for UI
-  const pendingValidationCount = items.filter(i => (i.status === ProcessingStatus.IDLE || i.status === ProcessingStatus.ERROR) && i.inputJson).length;
-  const readyToDraftCount = items.filter(i => i.status === ProcessingStatus.READY_TO_TRANSCRIBE).length;
-  const readyToAlignCount = items.filter(i => i.status === ProcessingStatus.TEXT_READY).length;
-  const completedCount = items.filter(i => i.status === ProcessingStatus.COMPLETED).length;
-
-  if (isCheckingKey) return <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center text-slate-500 dark:text-slate-400">Loading...</div>;
   if (!hasApiKey) return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4">
-        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg p-8 text-center max-w-md border border-slate-200 dark:border-slate-700">
-           <h1 className="text-xl font-bold mb-4 text-slate-900 dark:text-white">API Key Required</h1>
-           <button onClick={handleSelectKey} className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700">Select Key</button>
-        </div>
-      </div>
-    );
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+      <button onClick={handleSelectKey} className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-bold shadow-xl">Activate API Key</button>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 pb-20 transition-colors duration-200">
-      <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 h-16 flex items-center justify-between px-4 sticky top-0 z-10 shadow-sm transition-colors duration-200">
-        <h1 className="text-xl font-bold text-indigo-700 dark:text-indigo-400">Tunisian Transcriber: QA Workflow</h1>
-        
-        <button 
-          onClick={() => setDarkMode(!darkMode)}
-          className="w-10 h-10 rounded-full flex items-center justify-center bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
-          title="Toggle Dark Mode"
-        >
-          <i className={`fa-solid ${darkMode ? 'fa-sun' : 'fa-moon'}`}></i>
-        </button>
+    <div className={`min-h-screen ${darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'} transition-colors`}>
+      <header className="h-20 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-8 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-indigo-600 rounded-lg"></div>
+          <h1 className="text-lg font-black tracking-tight uppercase">Derja <span className="text-indigo-600">QA</span></h1>
+        </div>
+        <div className="flex items-center gap-4">
+          {batchProgress && (
+            <div className="text-[10px] font-black uppercase bg-indigo-600/10 text-indigo-600 px-3 py-1.5 rounded-full animate-pulse">
+              Processing: {batchProgress.current} / {batchProgress.total}
+            </div>
+          )}
+          <button onClick={() => setDarkMode(!darkMode)} className="p-3 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">
+            <i className={`fa-solid ${darkMode ? 'fa-sun' : 'fa-moon'}`}></i>
+          </button>
+        </div>
       </header>
-      <main className="max-w-5xl mx-auto px-4 py-8 space-y-8">
-        
-        {/* Bulk Actions Toolbar */}
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-wrap gap-4 items-center justify-between transition-colors duration-200">
-           <div className="text-sm font-medium text-slate-600 dark:text-slate-400">
-              Bulk Actions:
-           </div>
-           <div className="flex gap-3">
-              <button 
-                onClick={handleBatchValidate}
-                disabled={pendingValidationCount === 0}
-                className="px-4 py-2 bg-slate-800 dark:bg-slate-700 text-white rounded-lg text-sm font-medium hover:bg-slate-900 dark:hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-              >
-                 Validate All ({pendingValidationCount})
-              </button>
-              
-              <button 
-                onClick={handleBatchDraft}
-                disabled={readyToDraftCount === 0}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-              >
-                 Draft All ({readyToDraftCount})
-              </button>
 
-              <button 
-                onClick={handleBatchAlign}
-                disabled={readyToAlignCount === 0}
-                className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-              >
-                 Align All ({readyToAlignCount})
-              </button>
-
-              {completedCount > 0 && (
-                <button 
-                  onClick={handleBatchDownload}
-                  className="px-4 py-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-all"
-                >
-                  <i className="fa-solid fa-download mr-2"></i>
-                  Download Completed ({completedCount})
-                </button>
-              )}
-           </div>
+      <main className="max-w-6xl mx-auto p-8 space-y-12">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <button onClick={handleBatchValidate} className="p-4 bg-slate-100 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 hover:scale-[1.02] transition-transform text-center group">
+            <div className="text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-widest">Step 1</div>
+            <div className="font-black group-hover:text-indigo-600 transition-colors">Bulk Validate</div>
+          </button>
+          <button onClick={handleBatchDraft} className="p-4 bg-slate-100 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 hover:scale-[1.02] transition-transform text-center group">
+            <div className="text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-widest">Step 2</div>
+            <div className="font-black group-hover:text-indigo-600 transition-colors">Bulk AI Draft</div>
+          </button>
+          <div className="p-4 bg-slate-100 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 text-center">
+            <div className="text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-widest">Ready</div>
+            <div className="font-black">{items.filter(i=>i.status===ProcessingStatus.COMPLETED).length} Completed</div>
+          </div>
         </div>
 
         <FileUploader onFilesSelected={handleFilesSelected} />
-        
-        <div className="space-y-4">
-           {items.map(item => (
-             <TranscriptionItemCard 
-               key={item.id} 
-               item={item} 
-               onRemove={handleRemoveItem}
-               onUpdateJsonInput={handleUpdateJson}
-               onValidate={handleValidate}
-               onTranscribeDraft={handleTranscribeDraft}
-               onUpdateDraftText={handleUpdateDraftText}
-               onAlignJson={handleAlignJson}
-               onModelChange={handleModelChange}
-             />
-           ))}
+
+        <div className="space-y-6">
+          {items.map(item => (
+            <TranscriptionItemCard 
+              key={item.id} item={item}
+              onRemove={id => setItems(prev => prev.filter(i => i.id !== id))}
+              onUpdateJsonInput={(id, json) => setItems(prev => prev.map(i => i.id === id ? { ...i, inputJson: json, status: ProcessingStatus.IDLE } : i))}
+              onValidate={handleValidate}
+              onSkipValidation={id => setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.READY_TO_TRANSCRIBE } : i))}
+              onTranscribeDraft={handleTranscribeDraft}
+              onUpdateDraftText={(id, t) => setItems(prev => prev.map(i => i.id === id ? { ...i, finalTranscription: t } : i))}
+              onAlignJson={handleAlignJson}
+              onModelChange={(id, m) => setItems(prev => prev.map(i => i.id === id ? { ...i, model: m } : i))}
+              onRetry={id => setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.IDLE, validationReport: undefined } : i))}
+            />
+          ))}
         </div>
       </main>
     </div>
