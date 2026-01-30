@@ -1,7 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ValidationReport } from "../types";
 
-// --- API Key & Client Logic ---
 const getApiKeys = (): string[] => {
   const envVar = process.env.API_KEY;
   if (!envVar) throw new Error("API Key is missing.");
@@ -34,8 +33,7 @@ export const blobToBase64 = (blob: Blob): Promise<string> => {
 
 /**
  * AGENT 2: Structural Auditor (Text-Only)
- * Cross-checks acoustic claims against the actual JSON code.
- * Extremely token-efficient.
+ * Verifies if acoustic claims are mathematically possible in the JSON structure.
  */
 const auditValidationErrors = async (
   jsonSkeleton: string, 
@@ -45,21 +43,29 @@ const auditValidationErrors = async (
   if (rawErrors.length === 0) return { verifiedErrors: [], auditorNotes: [] };
 
   const prompt = `
-    TASK: Verify if the claimed "Acoustic Errors" are mathematically possible in the "JSON Code".
-    JSON CODE: ${jsonSkeleton}
-    CLAIMED ERRORS: ${rawErrors.join(", ")}
+    ROLE: JSON Structure & Timing Auditor.
+    TASK: Verify if the following claims are mathematically/logically present in the JSON.
+    
+    JSON CODE:
+    ${jsonSkeleton.slice(0, 8000)}
 
-    RULES:
-    1. If an error says "Missing segment at 10s" but the JSON has a segment covering 10s, it is a HALLUCINATION. Dismiss it.
-    2. If an error says "Overlap at 05:00" but the timestamps are sequential, it is a HALLUCINATION. Dismiss it.
-    3. Return only errors that are mathematically confirmed by the JSON data.
+    CLAIMS TO VERIFY:
+    ${rawErrors.join("\n")}
 
-    OUTPUT FORMAT: JSON { "verifiedErrors": [], "dismissedErrors": [] }
+    VALIDATION CATEGORIES (Use these tags only if verified):
+    - Timestamp Overlap / وجود أكثر من مقطع يشتركون في نفس النطاق الزمني: Check if end[n] > start[n+1].
+    - Unrealistic Duration / المدة الزمنية للمقطع قصيرة جداً: Check if (end - start) < 0.2s for long text.
+    - Broken JSON / خطأ في هيكل الكود: Check for syntax errors.
+
+    If a claim like "Missing Segment" is made, and you see a large gap (e.g., > 2s) in the JSON timestamps, VERIFY it. 
+    If you find no gap, DISMISS it as a hallucination.
+
+    OUTPUT: JSON { "verifiedErrors": ["Exact Arabic Tag"], "dismissedHallucinations": ["Reason"] }
   `;
 
   const ai = getAiClient();
   const response = await ai.models.generateContent({
-    model: modelId,
+    model: 'gemini-3-flash-preview',
     contents: prompt,
     config: { responseMimeType: "application/json", temperature: 0.1 }
   });
@@ -68,15 +74,15 @@ const auditValidationErrors = async (
     const result = JSON.parse(response.text || "{}");
     return {
       verifiedErrors: result.verifiedErrors || [],
-      auditorNotes: (result.dismissedErrors || []).map((e: string) => `Dismissed AI Hallucination: ${e}`)
+      auditorNotes: (result.dismissedHallucinations || []).map((e: string) => `Filtered Hallucination: ${e}`)
     };
   } catch {
-    return { verifiedErrors: rawErrors, auditorNotes: ["Auditor agent failed to parse."] };
+    return { verifiedErrors: rawErrors, auditorNotes: ["Auditor logic failed."] };
   }
 };
 
 /**
- * STEP 1: DUAL-AGENT VALIDATION
+ * STEP 1: VALIDATION (Dual-Agent)
  */
 export const validateJsonWithAudio = async (
   base64Audio: string,
@@ -87,10 +93,20 @@ export const validateJsonWithAudio = async (
   const safeMimeType = normalizeMimeType(mimeType);
   const ai = getAiClient();
 
-  // PASS 1: Acoustic Check (Multimodal)
   const acousticPrompt = `
-    Check if this Tunisian Arabic audio matches the provided JSON segments.
-    Return JSON: { "errors": ["Short description of misalignment or missing speech"], "audioSpeakerCount": number }
+    TASK: QA the JSON against the Audio using these specific Tunisian Arabic Rejection Tags:
+
+    1. Timestamp Misalignment / النص المكتوب لا يتزامن بدقة مع الإطار الزمني للصوت (Starts too early/ends too late).
+    2. Unrealistic Duration / المدة الزمنية للمقطع قصيرة جداً (Physically impossible timing for text length).
+    3. Missing Segment / يوجد كلام واضح ومسموع في الملف الصوتي تم تجاهله (Speech exists but no JSON segment).
+    4. Timestamp Overlap / وجود أكثر من مقطع يشتركون في نفس النطاق الزمني (Conflict between segments).
+    5. Phantom Segment / يحتوي ملف JSON على مقطع لفترة لا تحتوي على كلام بشري (Silence/Noise/Music only).
+    6. Speaker Misattribution / النص مكتوب بشكل صحيح، ولكن تم نسبه لـ Speaker ID خاطئ.
+    7. Speaker Count Mismatch / خطأ في عدد المتحدثين (num_speakers vs actual voices).
+
+    JSON Snippet: ${jsonSkeleton.slice(0, 5000)}
+    
+    OUTPUT: JSON { "errors": ["Selected Arabic Tag"], "audioSpeakerCount": number }
   `;
 
   const acousticResponse = await ai.models.generateContent({
@@ -98,15 +114,13 @@ export const validateJsonWithAudio = async (
     contents: {
       parts: [
         { inlineData: { mimeType: safeMimeType, data: base64Audio } },
-        { text: `JSON Snippet: ${jsonSkeleton.slice(0, 5000)}\n\n${acousticPrompt}` }
+        { text: acousticPrompt }
       ]
     },
     config: { responseMimeType: "application/json", temperature: 0.0 }
   });
 
   const acousticResult = JSON.parse(acousticResponse.text || '{"errors":[]}');
-  
-  // PASS 2: Structural Audit (Text-Only - Logic check)
   const { verifiedErrors, auditorNotes } = await auditValidationErrors(jsonSkeleton, acousticResult.errors || [], modelId);
 
   return {
@@ -122,7 +136,7 @@ export const validateJsonWithAudio = async (
 };
 
 /**
- * STEP 2: GENERATE DRAFT
+ * STEP 2: GENERATE DRAFT (Verbatim Paragraph)
  */
 export const generateDraftTranscription = async (
   base64Audio: string, 
@@ -132,12 +146,28 @@ export const generateDraftTranscription = async (
   onProgress?: (text: string) => void
 ): Promise<string> => {
   const ai = getAiClient();
+  const prompt = `
+    ROLE: Professional Tunisian Arabic Transcriber.
+    THE GOLDEN RULE: "Write exactly what you hear, not what you think should be said."
+    
+    STRICT RULES:
+    1. FORMAT: One single paragraph.
+    2. NO TIMESTAMPS: Do not include [00:00] or any time codes.
+    3. NO ELONGATION: Write "يا ليل" not "يا لييييل".
+    4. NO SPACE AFTER 'و': Write "والله" not "و الله".
+    5. TAGS: [music], [laughter], [unintelligible], [english], [other_dialect].
+    6. VERBATIM: Include repetitions (e.g., "أنا أنا").
+    7. DIACRITICS: Only use "تنوين الفتح" (ً) for words like شكرًا. No other vowel marks.
+
+    TRANSCRIPTION GUIDELINES: ${guidelines}
+  `;
+
   const responseStream = await ai.models.generateContentStream({
     model: modelId,
     contents: {
       parts: [
         { inlineData: { mimeType: normalizeMimeType(mimeType), data: base64Audio } },
-        { text: `Transcribe this verbatim in Tunisian Arabic paragraph. Rules: ${guidelines}` }
+        { text: prompt }
       ]
     }
   });
@@ -150,11 +180,12 @@ export const generateDraftTranscription = async (
       if (onProgress) onProgress(fullTranscript);
     }
   }
-  return fullTranscript;
+  // Safety strip any hallucinated timestamps
+  return fullTranscript.replace(/\[\d+:\d+\]/g, '').replace(/\d{2}:\d{2}/g, '').trim();
 };
 
 /**
- * STEP 3: ALIGN
+ * STEP 3: ALIGN (Correction -> JSON)
  */
 export const alignJsonToAudioAndText = async (
   base64Audio: string, 
@@ -164,15 +195,31 @@ export const alignJsonToAudioAndText = async (
   modelId: string
 ): Promise<string> => {
   const ai = getAiClient();
+  const prompt = `
+    ROLE: Forced Aligner.
+    TASK: Map the "Reference Text" into the provided "JSON Skeleton".
+    
+    REFERENCE TEXT: ${referenceText}
+    
+    JSON SKELETON:
+    ${jsonSkeleton}
+
+    INSTRUCTIONS:
+    1. Fill the "transcription" field for each segment.
+    2. KEEP ALL OTHER FIELDS (start, end, speaker, duration) EXACTLY AS THEY ARE.
+    3. RETURN THE COMPLETE JSON STRUCTURE. DO NOT TRUNCATE.
+  `;
+
   const response = await ai.models.generateContent({
     model: modelId,
     contents: {
       parts: [
         { inlineData: { mimeType: normalizeMimeType(mimeType), data: base64Audio } },
-        { text: `Align this text to these segments. Return the full updated JSON.\nTEXT: ${referenceText}\nJSON: ${jsonSkeleton}` }
+        { text: prompt }
       ]
     },
-    config: { responseMimeType: "application/json" }
+    config: { responseMimeType: "application/json", temperature: 0.1 }
   });
-  return response.text || jsonSkeleton;
+
+  return response.text || "";
 };
