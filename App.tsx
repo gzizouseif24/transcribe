@@ -5,7 +5,18 @@ import { TranscriptionItem, ProcessingStatus } from './types';
 import { blobToBase64, validateJsonWithAudio, generateDraftTranscription, alignJsonToAudioAndText } from './services/gemini';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
-const DEFAULT_GUIDELINES = `STRICT VERBATIM: Tunisian Derja spelling. Use digits for numbers. Tags: [unintelligible], [music].`;
+
+// Comprehensive Guidelines based on user prompt
+const TUNISIAN_GUIDELINES = `
+القاعدة الذهبية: «اكتب ما تسمعه بالضبط، لا ما تعتقد أنه يجب أن يقال».
+1. الخطوات: مراجعة النص العربي فقط، الحفاظ على علامات الـ JSON ("transcription").
+2. الممنوعات: حذف الأقواس {}، علامات التنصيص ""، أو الفواصل ,.
+3. التاجات: [english], [french], [other_dialect], [music], [laughter], [unintelligible].
+4. الفصحى: تُكتب كما هي تماماً بإملاء صحيح.
+5. حرف الواو: لا توجد مسافة بعده (والله).
+6. المسافات: لا مسافات زائدة في البداية أو النهاية.
+7. التشكيل: ممنوع ما عدا تنوين الفتح (ً) مثل: طبعاً.
+`;
 
 const App: React.FC = () => {
   const [items, setItems] = useState<TranscriptionItem[]>([]);
@@ -52,7 +63,7 @@ const App: React.FC = () => {
     setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.TRANSCRIBING } : i));
     try {
       const base64Audio = await blobToBase64(item.file);
-      const text = await generateDraftTranscription(base64Audio, item.mimeType, DEFAULT_GUIDELINES, item.model, (t) => {
+      const text = await generateDraftTranscription(base64Audio, item.mimeType, TUNISIAN_GUIDELINES, item.model, (t) => {
          setItems(prev => prev.map(i => i.id === id ? { ...i, finalTranscription: t } : i));
       });
       setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.TEXT_READY, finalTranscription: text } : i));
@@ -74,7 +85,6 @@ const App: React.FC = () => {
     }
   };
 
-  // --- BATCH RUNNERS (SEQUENTIAL FOR EFFICIENCY) ---
   const runSequential = async (targetItems: TranscriptionItem[], action: (id: string) => Promise<void>) => {
     setBatchProgress({ current: 0, total: targetItems.length });
     let count = 0;
@@ -113,64 +123,106 @@ const App: React.FC = () => {
   };
 
   if (!hasApiKey) return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-      <button onClick={handleSelectKey} className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-bold shadow-xl">Activate API Key</button>
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+      <button onClick={handleSelectKey} className="bg-indigo-600 text-white px-10 py-5 rounded-3xl font-black uppercase tracking-widest shadow-2xl shadow-indigo-600/40 hover:scale-105 active:scale-95 transition-all">Activate AI Engine</button>
     </div>
   );
 
   return (
-    <div className={`min-h-screen ${darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'} transition-colors`}>
-      <header className="h-20 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-8 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg"></div>
-          <h1 className="text-lg font-black tracking-tight uppercase">Derja <span className="text-indigo-600">QA</span></h1>
-        </div>
+    <div className={`min-h-screen ${darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'} transition-all duration-500`}>
+      <header className="h-24 border-b border-slate-200/50 dark:border-slate-800 flex items-center justify-between px-10 bg-white/40 dark:bg-slate-900/40 backdrop-blur-2xl sticky top-0 z-50">
         <div className="flex items-center gap-4">
+          <div className="w-10 h-10 bg-indigo-600 rounded-2xl shadow-lg shadow-indigo-600/30 flex items-center justify-center">
+             <i className="fa-solid fa-bolt-lightning text-white text-lg"></i>
+          </div>
+          <div>
+            <h1 className="text-lg font-black tracking-[0.2em] uppercase leading-none">Derja <span className="text-indigo-600">QA</span></h1>
+            <p className="text-[9px] font-black text-slate-400 uppercase mt-1 tracking-widest">Enterprise Transcription Tool</p>
+          </div>
+        </div>
+        
+        <div className="flex items-center gap-6">
           {batchProgress && (
-            <div className="text-[10px] font-black uppercase bg-indigo-600/10 text-indigo-600 px-3 py-1.5 rounded-full animate-pulse">
-              Processing: {batchProgress.current} / {batchProgress.total}
+            <div className="flex items-center gap-3 bg-indigo-600/10 px-4 py-2 rounded-2xl border border-indigo-600/20">
+               <div className="w-2 h-2 bg-indigo-600 rounded-full animate-ping"></div>
+               <span className="text-[10px] font-black uppercase text-indigo-600 tracking-widest">
+                 Working: {batchProgress.current} / {batchProgress.total}
+               </span>
             </div>
           )}
-          <button onClick={() => setDarkMode(!darkMode)} className="p-3 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">
-            <i className={`fa-solid ${darkMode ? 'fa-sun' : 'fa-moon'}`}></i>
+          <button onClick={() => setDarkMode(!darkMode)} className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center hover:scale-110 transition-all text-slate-500 dark:text-slate-400">
+            <i className={`fa-solid ${darkMode ? 'fa-sun' : 'fa-moon'} text-lg`}></i>
           </button>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto p-8 space-y-12">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <button onClick={handleBatchValidate} className="p-4 bg-slate-100 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 hover:scale-[1.02] transition-transform text-center group">
-            <div className="text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-widest">Step 1</div>
-            <div className="font-black group-hover:text-indigo-600 transition-colors">Bulk Validate</div>
+      <main className="max-w-7xl mx-auto p-10 space-y-16">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <button onClick={handleBatchValidate} className="p-8 bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 hover:border-indigo-500/50 transition-all group relative overflow-hidden">
+            <div className="relative z-10 text-center">
+              <div className="text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest group-hover:text-indigo-500 transition-colors">Phase 01</div>
+              <div className="text-xl font-black group-hover:scale-105 transition-transform">Bulk QA Validate</div>
+            </div>
+            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+               <i className="fa-solid fa-shield-halved text-5xl"></i>
+            </div>
           </button>
-          <button onClick={handleBatchDraft} className="p-4 bg-slate-100 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 hover:scale-[1.02] transition-transform text-center group">
-            <div className="text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-widest">Step 2</div>
-            <div className="font-black group-hover:text-indigo-600 transition-colors">Bulk AI Draft</div>
+          
+          <button onClick={handleBatchDraft} className="p-8 bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 hover:border-indigo-500/50 transition-all group relative overflow-hidden">
+            <div className="relative z-10 text-center">
+              <div className="text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest group-hover:text-indigo-500 transition-colors">Phase 02</div>
+              <div className="text-xl font-black group-hover:scale-105 transition-transform">Bulk AI Draft</div>
+            </div>
+            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+               <i className="fa-solid fa-wand-sparkles text-5xl"></i>
+            </div>
           </button>
-          <div className="p-4 bg-slate-100 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 text-center">
-            <div className="text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-widest">Ready</div>
-            <div className="font-black">{items.filter(i=>i.status===ProcessingStatus.COMPLETED).length} Completed</div>
+
+          <div className="p-8 bg-indigo-600/5 dark:bg-indigo-600/5 rounded-[2.5rem] border-2 border-indigo-600/10 flex flex-col items-center justify-center text-center">
+            <div className="text-3xl font-black text-indigo-600">{items.filter(i=>i.status===ProcessingStatus.COMPLETED).length}</div>
+            <div className="text-[10px] font-black text-indigo-600/60 uppercase tracking-widest mt-1">Files Finished</div>
           </div>
         </div>
 
-        <FileUploader onFilesSelected={handleFilesSelected} />
+        <section className="space-y-6">
+           <h2 className="text-xs font-black uppercase tracking-[0.3em] text-slate-400 px-2 flex items-center">
+             <i className="fa-solid fa-cloud-arrow-up mr-3 text-indigo-500"></i>
+             Upload Pipeline
+           </h2>
+           <FileUploader onFilesSelected={handleFilesSelected} />
+        </section>
 
-        <div className="space-y-6">
-          {items.map(item => (
-            <TranscriptionItemCard 
-              key={item.id} item={item}
-              onRemove={id => setItems(prev => prev.filter(i => i.id !== id))}
-              onUpdateJsonInput={(id, json) => setItems(prev => prev.map(i => i.id === id ? { ...i, inputJson: json, status: ProcessingStatus.IDLE } : i))}
-              onValidate={handleValidate}
-              onSkipValidation={id => setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.READY_TO_TRANSCRIBE } : i))}
-              onTranscribeDraft={handleTranscribeDraft}
-              onUpdateDraftText={(id, t) => setItems(prev => prev.map(i => i.id === id ? { ...i, finalTranscription: t } : i))}
-              onAlignJson={handleAlignJson}
-              onModelChange={(id, m) => setItems(prev => prev.map(i => i.id === id ? { ...i, model: m } : i))}
-              onRetry={id => setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.IDLE, validationReport: undefined } : i))}
-            />
-          ))}
-        </div>
+        <section className="space-y-10 pb-20">
+          <h2 className="text-xs font-black uppercase tracking-[0.3em] text-slate-400 px-2 flex items-center">
+             <i className="fa-solid fa-list-check mr-3 text-indigo-500"></i>
+             Active Tasks ({items.length})
+          </h2>
+          <div className="space-y-10">
+            {items.map(item => (
+              <TranscriptionItemCard 
+                key={item.id} item={item}
+                onRemove={id => setItems(prev => prev.filter(i => i.id !== id))}
+                onUpdateJsonInput={(id, json) => setItems(prev => prev.map(i => i.id === id ? { ...i, inputJson: json, status: ProcessingStatus.IDLE, validationReport: undefined } : i))}
+                onValidate={handleValidate}
+                onSkipValidation={id => setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.READY_TO_TRANSCRIBE } : i))}
+                onTranscribeDraft={handleTranscribeDraft}
+                onUpdateDraftText={(id, t) => setItems(prev => prev.map(i => i.id === id ? { ...i, finalTranscription: t } : i))}
+                onAlignJson={handleAlignJson}
+                onModelChange={(id, m) => setItems(prev => prev.map(i => i.id === id ? { ...i, model: m } : i))}
+                onRetry={id => setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.IDLE, validationReport: undefined } : i))}
+              />
+            ))}
+            {items.length === 0 && (
+              <div className="py-32 flex flex-col items-center justify-center bg-slate-100/30 dark:bg-slate-900/30 rounded-[3rem] border-2 border-dashed border-slate-200 dark:border-slate-800">
+                 <div className="w-20 h-20 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center mb-6">
+                    <i className="fa-solid fa-inbox text-slate-400 text-3xl"></i>
+                 </div>
+                 <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">No active transcription tasks</p>
+                 <p className="text-[10px] text-slate-500 mt-2">Upload audio and JSON files to begin</p>
+              </div>
+            )}
+          </div>
+        </section>
       </main>
     </div>
   );

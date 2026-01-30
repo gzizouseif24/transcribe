@@ -33,34 +33,25 @@ export const blobToBase64 = (blob: Blob): Promise<string> => {
 
 /**
  * AGENT 2: Structural Auditor (Text-Only)
- * Verifies if acoustic claims are mathematically possible in the JSON structure.
+ * Verifies if claims from Agent 1 are mathematically possible in the JSON.
+ * Highly optimized for token efficiency.
  */
 const auditValidationErrors = async (
   jsonSkeleton: string, 
   rawErrors: string[],
   modelId: string
-): Promise<{ verifiedErrors: string[], auditorNotes: string[] }> => {
-  if (rawErrors.length === 0) return { verifiedErrors: [], auditorNotes: [] };
+): Promise<{ verifiedErrors: string[] }> => {
+  if (rawErrors.length === 0) return { verifiedErrors: [] };
 
   const prompt = `
-    ROLE: JSON Structure & Timing Auditor.
-    TASK: Verify if the following claims are mathematically/logically present in the JSON.
-    
-    JSON CODE:
-    ${jsonSkeleton.slice(0, 8000)}
-
-    CLAIMS TO VERIFY:
-    ${rawErrors.join("\n")}
-
-    VALIDATION CATEGORIES (Use these tags only if verified):
-    - Timestamp Overlap / وجود أكثر من مقطع يشتركون في نفس النطاق الزمني: Check if end[n] > start[n+1].
-    - Unrealistic Duration / المدة الزمنية للمقطع قصيرة جداً: Check if (end - start) < 0.2s for long text.
-    - Broken JSON / خطأ في هيكل الكود: Check for syntax errors.
-
-    If a claim like "Missing Segment" is made, and you see a large gap (e.g., > 2s) in the JSON timestamps, VERIFY it. 
-    If you find no gap, DISMISS it as a hallucination.
-
-    OUTPUT: JSON { "verifiedErrors": ["Exact Arabic Tag"], "dismissedHallucinations": ["Reason"] }
+    Verify if these "Acoustic Claims" are mathematically possible in this "JSON Code".
+    JSON: ${jsonSkeleton.slice(0, 10000)}
+    CLAIMS: ${rawErrors.join(", ")}
+    RULES: 
+    - If overlap is claimed, check end[n] > start[n+1].
+    - If duration is unrealistic (<0.2s), verify start/end delta.
+    - If missing segment is claimed, look for timestamp gaps > 1.5s.
+    OUTPUT JSON: { "verifiedErrors": ["Original Tag"] } (ONLY confirmed ones).
   `;
 
   const ai = getAiClient();
@@ -72,17 +63,14 @@ const auditValidationErrors = async (
 
   try {
     const result = JSON.parse(response.text || "{}");
-    return {
-      verifiedErrors: result.verifiedErrors || [],
-      auditorNotes: (result.dismissedHallucinations || []).map((e: string) => `Filtered Hallucination: ${e}`)
-    };
+    return { verifiedErrors: result.verifiedErrors || [] };
   } catch {
-    return { verifiedErrors: rawErrors, auditorNotes: ["Auditor logic failed."] };
+    return { verifiedErrors: rawErrors };
   }
 };
 
 /**
- * STEP 1: VALIDATION (Dual-Agent)
+ * STEP 1: VALIDATION (Dual-Agent with Standard Rejection Tags)
  */
 export const validateJsonWithAudio = async (
   base64Audio: string,
@@ -94,19 +82,18 @@ export const validateJsonWithAudio = async (
   const ai = getAiClient();
 
   const acousticPrompt = `
-    TASK: QA the JSON against the Audio using these specific Tunisian Arabic Rejection Tags:
-
-    1. Timestamp Misalignment / النص المكتوب لا يتزامن بدقة مع الإطار الزمني للصوت (Starts too early/ends too late).
-    2. Unrealistic Duration / المدة الزمنية للمقطع قصيرة جداً (Physically impossible timing for text length).
-    3. Missing Segment / يوجد كلام واضح ومسموع في الملف الصوتي تم تجاهله (Speech exists but no JSON segment).
-    4. Timestamp Overlap / وجود أكثر من مقطع يشتركون في نفس النطاق الزمني (Conflict between segments).
-    5. Phantom Segment / يحتوي ملف JSON على مقطع لفترة لا تحتوي على كلام بشري (Silence/Noise/Music only).
-    6. Speaker Misattribution / النص مكتوب بشكل صحيح، ولكن تم نسبه لـ Speaker ID خاطئ.
-    7. Speaker Count Mismatch / خطأ في عدد المتحدثين (num_speakers vs actual voices).
-
-    JSON Snippet: ${jsonSkeleton.slice(0, 5000)}
+    QA this JSON against the Audio. Use ONLY these exact Arabic tags for errors:
+    - Broken JSON / خطأ في هيكل الكود
+    - Timestamp Misalignment / النص المكتوب لا يتزامن بدقة مع الإطار الزمني للصوت
+    - Unrealistic Duration / المدة الزمنية للمقطع قصيرة جداً
+    - Missing Segment / يوجد كلام واضح ومسموع في الملف الصوتي تم تجاهله
+    - Timestamp Overlap / وجود أكثر من مقطع يشتركون في نفس النطاق الزمني
+    - Phantom Segment / يحتوي ملف JSON على مقطع لفترة لا تحتوي على كلام بشري
+    - Speaker Misattribution / النص مكتوب بشكل صحيح، ولكن تم نسبه لـ Speaker ID خاطئ
+    - Speaker Count Mismatch / خطأ في عدد المتحدثين
     
-    OUTPUT: JSON { "errors": ["Selected Arabic Tag"], "audioSpeakerCount": number }
+    JSON Snippet: ${jsonSkeleton.slice(0, 5000)}
+    OUTPUT JSON: { "errors": ["Arabic Tag"], "audioSpeakerCount": number }
   `;
 
   const acousticResponse = await ai.models.generateContent({
@@ -121,22 +108,22 @@ export const validateJsonWithAudio = async (
   });
 
   const acousticResult = JSON.parse(acousticResponse.text || '{"errors":[]}');
-  const { verifiedErrors, auditorNotes } = await auditValidationErrors(jsonSkeleton, acousticResult.errors || [], modelId);
+  const { verifiedErrors } = await auditValidationErrors(jsonSkeleton, acousticResult.errors || [], modelId);
 
   return {
     isValid: verifiedErrors.length === 0,
     errors: verifiedErrors,
-    warnings: auditorNotes,
+    warnings: [], // Removed auditor notes to save tokens
     stats: {
       audioSpeakerCount: acousticResult.audioSpeakerCount || 0,
-      jsonSpeakerCount: 0, 
+      jsonSpeakerCount: 0,
       segmentCount: 0
     }
   };
 };
 
 /**
- * STEP 2: GENERATE DRAFT (Verbatim Paragraph)
+ * STEP 2: GENERATE DRAFT (Paragraph Verbatim)
  */
 export const generateDraftTranscription = async (
   base64Audio: string, 
@@ -146,19 +133,19 @@ export const generateDraftTranscription = async (
   onProgress?: (text: string) => void
 ): Promise<string> => {
   const ai = getAiClient();
-  const prompt = `
-    ROLE: Professional Tunisian Arabic Transcriber.
-    THE GOLDEN RULE: "Write exactly what you hear, not what you think should be said."
-    
-    STRICT RULES:
-    1. FORMAT: One single paragraph.
-    2. NO TIMESTAMPS: Do not include [00:00] or any time codes.
-    3. NO ELONGATION: Write "يا ليل" not "يا لييييل".
-    4. NO SPACE AFTER 'و': Write "والله" not "و الله".
-    5. TAGS: [music], [laughter], [unintelligible], [english], [other_dialect].
-    6. VERBATIM: Include repetitions (e.g., "أنا أنا").
-    7. DIACRITICS: Only use "تنوين الفتح" (ً) for words like شكرًا. No other vowel marks.
-
+  const systemPrompt = `
+    ROLE: Professional Verbatim Tunisian Arabic Transcriber.
+    GOLDEN RULE: "Write exactly what you hear, not what you think should be said."
+    FORMAT: One single paragraph only. 
+    STRICT: NO TIMESTAMPS [00:00]. NO TIME CODES. 
+    RULES:
+    - Verbatim repetition (e.g., "أنا أنا").
+    - No elongation (Write "حبيبي" not "حبيبييي").
+    - No space after 'و' (Write "والله" not "و الله").
+    - Use tags: [music], [laughter], [unintelligible], [english], [other_dialect].
+    - Dialects: If not Tunisian, use [other_dialect].
+    - MSA (Fusha): Write as is with correct spelling (Hamzas, Taa Marbouta).
+    - Diacritics: Only Tanween (ً) is allowed (e.g. طبعاً). No other vowel marks.
     TRANSCRIPTION GUIDELINES: ${guidelines}
   `;
 
@@ -167,7 +154,7 @@ export const generateDraftTranscription = async (
     contents: {
       parts: [
         { inlineData: { mimeType: normalizeMimeType(mimeType), data: base64Audio } },
-        { text: prompt }
+        { text: systemPrompt }
       ]
     }
   });
@@ -180,12 +167,12 @@ export const generateDraftTranscription = async (
       if (onProgress) onProgress(fullTranscript);
     }
   }
-  // Safety strip any hallucinated timestamps
+  // Post-process to ensure no timestamps hallucinated
   return fullTranscript.replace(/\[\d+:\d+\]/g, '').replace(/\d{2}:\d{2}/g, '').trim();
 };
 
 /**
- * STEP 3: ALIGN (Correction -> JSON)
+ * STEP 3: ALIGN CORRECTED TEXT -> JSON
  */
 export const alignJsonToAudioAndText = async (
   base64Audio: string, 
@@ -197,17 +184,18 @@ export const alignJsonToAudioAndText = async (
   const ai = getAiClient();
   const prompt = `
     ROLE: Forced Aligner.
-    TASK: Map the "Reference Text" into the provided "JSON Skeleton".
+    TASK: Distribute the "Reference Text" into the provided "JSON Skeleton".
     
-    REFERENCE TEXT: ${referenceText}
-    
+    REFERENCE TEXT (Correct Source):
+    ${referenceText}
+
     JSON SKELETON:
     ${jsonSkeleton}
 
     INSTRUCTIONS:
-    1. Fill the "transcription" field for each segment.
-    2. KEEP ALL OTHER FIELDS (start, end, speaker, duration) EXACTLY AS THEY ARE.
-    3. RETURN THE COMPLETE JSON STRUCTURE. DO NOT TRUNCATE.
+    1. Distribute the text into the "transcription" fields based on the audio timing.
+    2. KEEP ALL OTHER KEYS (start, end, speaker, duration, num_speakers) EXACTLY AS THEY ARE.
+    3. IMPORTANT: DO NOT TRUNCATE. RETURN THE FULL JSON OBJECT.
   `;
 
   const response = await ai.models.generateContent({
@@ -221,5 +209,5 @@ export const alignJsonToAudioAndText = async (
     config: { responseMimeType: "application/json", temperature: 0.1 }
   });
 
-  return response.text || "";
+  return response.text || jsonSkeleton;
 };
