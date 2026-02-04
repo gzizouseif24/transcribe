@@ -9,11 +9,16 @@ export enum ProcessingStatus {
   ERROR = 'ERROR',
 }
 
+export interface ValidationError {
+  tag: string;       // English Tag Name
+  time: string;      // Timestamp or Segment ID
+  description: string; // Brief reason in Arabic/English
+}
+
 export interface ValidationReport {
   isValid: boolean;
-  errors: string[];
+  errors: ValidationError[]; // Now structured objects
   warnings: string[];
-  auditorNotes?: string[]; // Hallucinations caught by the second agent
   stats: {
     audioSpeakerCount: number;
     jsonSpeakerCount: number;
