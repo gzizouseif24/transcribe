@@ -33,7 +33,7 @@ export const blobToBase64 = (blob: Blob): Promise<string> => {
 };
 
 /**
- * AGENT 2: Structural Auditor
+ * AGENT 2: Structural Auditor (Triangulation Auditor)
  */
 const auditValidationErrors = async (
   jsonSkeleton: string, 
@@ -44,18 +44,21 @@ const auditValidationErrors = async (
 
   const prompt = `
     Verify if these "Acoustic Claims" are mathematically and structurally possible in this "JSON Code".
+    
+    CONTEXT:
+    The user is performing a "Triangulation" check. The transcribed text in the JSON is a DRAFT and might be faulty.
+    
     JSON: ${jsonSkeleton.slice(0, 10000)}
     CLAIMS: ${JSON.stringify(rawErrors)}
     
-    RULES: 
-    1. Timestamp Overlap: Only verify if (end[n] - start[n+1]) is GREATER than 0.7 seconds. Ignore minor overlaps.
-    2. Unrealistic Duration: Verify if (end - start) < 0.2s.
-    3. Missing Segment: Verify if there are silence gaps in the JSON > 1.5s where the audio might have speech.
-    4. Speaker Misattribution: Confirm if the claim of a wrong speaker ID matches a timestamp that exists in the JSON.
+    VERIFICATION LOGIC: 
+    1. Timestamp Overlap: Only verify if (end[n] - start[n+1]) is GREATER than 0.7 seconds.
+    2. Speaker Misattribution: Confirm if the claim identifies a specific segment ID and if that segment exists.
+    3. Missing Segment: Cross-reference the claim's time range with the JSON's timeline to see if it truly falls in a "gap" (>1.5s).
     
     IMPORTANT: All descriptions must be in English.
     
-    OUTPUT JSON: { "verifiedErrors": [{ "tag": "English Tag", "time": "Timestamp", "description": "English Reason" }] }
+    OUTPUT JSON: { "verifiedErrors": [{ "tag": string, "time": string, "description": string }] }
   `;
 
   const ai = getAiClient();
@@ -74,7 +77,7 @@ const auditValidationErrors = async (
 };
 
 /**
- * STEP 1: VALIDATION (Dual-Agent with Structured Error Logs)
+ * STEP 1: VALIDATION (Dual-Agent Triangulation)
  */
 export const validateJsonWithAudio = async (
   base64Audio: string,
@@ -86,25 +89,27 @@ export const validateJsonWithAudio = async (
   const ai = getAiClient();
 
   const acousticPrompt = `
-    QA this JSON against the Audio. 
+    QA this JSON against the Audio using TRIANGULATION.
     
-    CRITICAL INSTRUCTIONS:
-    1. IGNORE the "transcription" text field entirely. Do not flag typos, wrong words, or language issues.
-    2. IGNORE speaker-to-text mismatches (what they say).
-    3. ONLY focus on these structural/acoustic errors:
-       - [Speaker Count Mismatch]: Audio has a different total number of unique voices than the JSON speaker IDs.
-       - [Speaker Misattribution]: A segment is assigned to Speaker ID X, but the voice heard at that time clearly belongs to Speaker ID Y's profile. (Identify by voice sound only).
-       - [Phantom Segment]: A segment exists in JSON where there is no speech in audio.
-       - [Missing Segment]: A speaker is talking in audio but no segment exists in JSON for that duration.
-       - [Timestamp Overlap]: ONLY flag if segments overlap by MORE THAN 0.7 seconds.
+    EVIDENCE SOURCES:
+    1. AUDIO: Use the sound of the voice to create "speaker fingerprints."
+    2. JSON MAP: Use the start/end/speaker_id metadata.
+    3. INTENT (Text): The text is a FAULTY DRAFT. Some words may be placed in the wrong segment (boundary bleed).
     
-    For every error found, return:
-    - tag: (Use ONLY: [Speaker Count Mismatch, Speaker Misattribution, Phantom Segment, Missing Segment, Timestamp Overlap, Unrealistic Duration])
-    - time: Exact timestamp (e.g. 00:04.2)
-    - description: Brief reason in ENGLISH explaining the structural error.
-
+    INSTRUCTIONS:
+    - [Speaker Misattribution]: Compare the voice sound in a segment to the profile of its assigned Speaker ID. If Speaker 01 is established as a Male voice elsewhere, but a segment assigned to Speaker 01 has a Female voice, flag it. Do NOT guess based on the draft text; use the text only to understand who the transcriber INTENDED to map.
+    - [Boundary Bleed]: DO NOT flag text that seems to overflow into the next segment. This is expected.
+    - [Gaps]: Flag if there is clear speech in a gap between segments > 1.5s.
+    
+    STRUCTURAL ERROR TAGS:
+    - [Speaker Count Mismatch]
+    - [Speaker Misattribution]
+    - [Phantom Segment]
+    - [Missing Segment]
+    - [Timestamp Overlap]
+    
     JSON Snippet: ${jsonSkeleton.slice(0, 5000)}
-    OUTPUT JSON: { "errors": [{"tag": string, "time": string, "description": string}], "audioSpeakerCount": number }
+    OUTPUT JSON: { "errors": [{"tag": string, "time": string, "description": string}], "audioSpeakerCount": number, "segmentCount": number }
   `;
 
   const acousticResponse = await ai.models.generateContent({
@@ -121,14 +126,21 @@ export const validateJsonWithAudio = async (
   const acousticResult = JSON.parse(acousticResponse.text || '{"errors":[]}');
   const { verifiedErrors } = await auditValidationErrors(jsonSkeleton, acousticResult.errors || [], modelId);
 
+  let jsonSpeakerCount = 0;
+  try {
+    const data = JSON.parse(jsonSkeleton);
+    const speakers = new Set(data.map((s: any) => s.speaker || s.speaker_id));
+    jsonSpeakerCount = speakers.size;
+  } catch (e) {}
+
   return {
     isValid: verifiedErrors.length === 0,
     errors: verifiedErrors,
     warnings: [],
     stats: {
       audioSpeakerCount: acousticResult.audioSpeakerCount || 0,
-      jsonSpeakerCount: 0,
-      segmentCount: 0
+      jsonSpeakerCount: jsonSpeakerCount,
+      segmentCount: acousticResult.segmentCount || 0
     }
   };
 };
@@ -175,6 +187,7 @@ export const generateDraftTranscription = async (
 
 /**
  * STEP 3: FORCED ALIGNMENT (Correction -> JSON)
+ * STRICTLY PRESERVES THE ORIGINAL JSON SCHEMA
  */
 export const alignJsonToAudioAndText = async (
   base64Audio: string, 
@@ -194,12 +207,10 @@ export const alignJsonToAudioAndText = async (
     ${jsonSkeleton}
 
     TASK:
-    1. The SOURCE TEXT contains line breaks (\\n). Treat each line as the intended text for a single segment in the JSON SKELETON. Use these line breaks as primary structural anchors for mapping.
-    2. Distribute the SOURCE TEXT into the "transcription" fields of the JSON SKELETON based on these lines.
-    3. Use the audio to confirm segment boundaries, but respect the line-to-segment mapping provided by the user via line breaks.
-    4. KEEP ALL OLD KEYS (start, end, speaker, id, duration) EXACTLY AS THEY ARE in the Skeleton.
-    5. DO NOT ADD OR REMOVE WORDS from the Source Text.
-    6. Return the COMPLETE JSON object. DO NOT TRUNCATE.
+    1. Distribute the SOURCE TEXT into the "transcription" fields of the JSON SKELETON.
+    2. ABSOLUTE CONSTRAINT: The resulting JSON structure MUST be identical to the JSON SKELETON. Do NOT add, remove, or rename any keys (id, start, end, speaker, duration, etc).
+    3. ONLY modify the content of the "transcription" property.
+    4. Return the COMPLETE, valid JSON object.
   `;
 
   const response = await aiClient.models.generateContent({
