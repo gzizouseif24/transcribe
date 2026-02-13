@@ -2,15 +2,12 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ValidationReport, ValidationError } from "../types";
 
-const getApiKeys = (): string[] => {
-  const envVar = process.env.API_KEY;
-  if (!envVar) throw new Error("API Key is missing.");
-  return envVar.split(',').map(k => k.trim()).filter(k => k);
-};
-
+// Always initialize GoogleGenAI with a named parameter using process.env.API_KEY.
+// Create a new instance right before making an API call to ensure the latest key is used.
 const getAiClient = () => {
-  const keys = getApiKeys();
-  return new GoogleGenAI({ apiKey: keys[0] });
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) throw new Error("API Key is missing.");
+  return new GoogleGenAI({ apiKey });
 };
 
 const normalizeMimeType = (mimeType: string): string => {
@@ -24,8 +21,8 @@ export const blobToBase64 = (blob: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
-      const result = reader.result as string;
-      resolve(result.split(',')[1]);
+      const base64 = (reader.result as string).split(',')[1];
+      resolve(base64);
     };
     reader.onerror = reject;
     reader.readAsDataURL(blob);
@@ -33,7 +30,7 @@ export const blobToBase64 = (blob: Blob): Promise<string> => {
 };
 
 /**
- * AGENT 2: Structural Auditor (Triangulation Auditor)
+ * AGENT 2: Structural Auditor (Audit validation claims against JSON math)
  */
 const auditValidationErrors = async (
   jsonSkeleton: string, 
@@ -45,16 +42,13 @@ const auditValidationErrors = async (
   const prompt = `
     Verify if these "Acoustic Claims" are mathematically and structurally possible in this "JSON Code".
     
-    CONTEXT:
-    The user is performing a "Triangulation" check. The transcribed text in the JSON is a DRAFT and might be faulty.
-    
     JSON: ${jsonSkeleton.slice(0, 10000)}
     CLAIMS: ${JSON.stringify(rawErrors)}
     
     VERIFICATION LOGIC: 
-    1. Timestamp Overlap: Only verify if (end[n] - start[n+1]) is GREATER than 0.7 seconds.
+    1. Timestamp Overlap: Flag as error ONLY if (start_time of segment N) is EARLIER than (end_time of segment N-1) by more than 0.7 seconds (interference).
     2. Speaker Misattribution: Confirm if the claim identifies a specific segment ID and if that segment exists.
-    3. Missing Segment: Cross-reference the claim's time range with the JSON's timeline to see if it truly falls in a "gap" (>1.5s).
+    3. Missing Segment: Cross-reference the claim's time range with the JSON's timeline.
     
     IMPORTANT: All descriptions must be in English.
     
@@ -89,24 +83,14 @@ export const validateJsonWithAudio = async (
   const ai = getAiClient();
 
   const acousticPrompt = `
-    QA this JSON against the Audio using TRIANGULATION.
+    QA this JSON against the Audio using the following strict Acoustic Definitions:
     
-    EVIDENCE SOURCES:
-    1. AUDIO: Use the sound of the voice to create "speaker fingerprints."
-    2. JSON MAP: Use the start/end/speaker_id metadata.
-    3. INTENT (Text): The text is a FAULTY DRAFT. Some words may be placed in the wrong segment (boundary bleed).
-    
-    INSTRUCTIONS:
-    - [Speaker Misattribution]: Compare the voice sound in a segment to the profile of its assigned Speaker ID. If Speaker 01 is established as a Male voice elsewhere, but a segment assigned to Speaker 01 has a Female voice, flag it. Do NOT guess based on the draft text; use the text only to understand who the transcriber INTENDED to map.
-    - [Boundary Bleed]: DO NOT flag text that seems to overflow into the next segment. This is expected.
-    - [Gaps]: Flag if there is clear speech in a gap between segments > 1.5s.
-    
-    STRUCTURAL ERROR TAGS:
-    - [Speaker Count Mismatch]
-    - [Speaker Misattribution]
-    - [Phantom Segment]
-    - [Missing Segment]
-    - [Timestamp Overlap]
+    DEFINITIONS FOR ERRORS:
+    1. [Missing Segment]: Flag ONLY if you hear human speech in a gap where NO segment exists in the JSON. If there is silence in a gap, it is NOT an error.
+    2. [Phantom Segment]: Flag ONLY if a segment exists in the JSON, but there is NO human speech (only silence, noise, or music) during that duration.
+    3. [Speaker Misattribution]: Identify the number of distinct voices. Flag if a segment's Speaker ID does not match the established vocal identity (gender, tone, cadence) for that ID.
+    4. [Timestamp Overlap]: Flag if two segments overlap/interfere by more than 0.7 seconds.
+    5. [Timestamp Misalignment]: Flag if a segment starts "Too Early" (i.e., the timestamp begins significantly before the speaker actually starts talking).
     
     JSON Snippet: ${jsonSkeleton.slice(0, 5000)}
     OUTPUT JSON: { "errors": [{"tag": string, "time": string, "description": string}], "audioSpeakerCount": number, "segmentCount": number }
@@ -146,7 +130,7 @@ export const validateJsonWithAudio = async (
 };
 
 /**
- * STEP 2: GENERATE DRAFT
+ * STEP 2: GENERATE DRAFT (Phonetic Acoustic Mirror)
  */
 export const generateDraftTranscription = async (
   base64Audio: string, 
@@ -157,11 +141,20 @@ export const generateDraftTranscription = async (
 ): Promise<string> => {
   const ai = getAiClient();
   const systemPrompt = `
-    ROLE: Professional Verbatim Tunisian Arabic Transcriber.
-    GOLDEN RULE: "Write exactly what you hear, not what you think should be said."
-    FORMAT: One single paragraph only. NO TIMESTAMPS.
-    RULES: Verbatim repetition, no elongation, tags for [music], [laughter], etc.
-    TRANSCRIPTION GUIDELINES: ${guidelines}
+    ROLE: Acoustic Mirror (Tunisian Derja). 
+    TASK: Transcribe exactly what you hear. Do not correct grammar. Do not enforce Modern Standard Arabic rules.
+    
+    STRICT RULES:
+    1. NO PUNCTUATION: Do not use periods, commas, question marks, or exclamation points.
+    2. SPEAKER TURNS: Whenever the speaker changes or there is a significant pause/turn, start a NEW LINE.
+    3. SPELLING NORMALIZATION:
+       - Always use 'فما', NEVER use 'فمة'.
+       - Always use 'باش', NEVER use 'سوف'.
+       - Always use 'شكون', NEVER use 'من هو'.
+    4. NO HALLUCINATION: If you hear French or English words, write them verbatim.
+    5. VERBATIM: If the speaker stutters or uses "incorrect" dialect forms, keep them exactly as they are.
+    
+    FORMAT: Plain text with line breaks for speaker changes.
   `;
 
   const responseStream = await ai.models.generateContentStream({
@@ -178,16 +171,17 @@ export const generateDraftTranscription = async (
   for await (const chunk of responseStream) {
     const chunkText = chunk.text;
     if (chunkText) {
-      fullTranscript += chunkText;
+      const cleanChunk = chunkText.replace(/[،.؟!"';:]/g, '');
+      fullTranscript += cleanChunk;
       if (onProgress) onProgress(fullTranscript);
     }
   }
+  
   return fullTranscript.replace(/\[\d+:\d+\]/g, '').replace(/\d{2}:\d{2}/g, '').trim();
 };
 
 /**
- * STEP 3: FORCED ALIGNMENT (Correction -> JSON)
- * STRICTLY PRESERVES THE ORIGINAL JSON SCHEMA
+ * STEP 3: FORCED LINEAR ALIGNMENT (Structural Integrity + Line-Break Anchoring)
  */
 export const alignJsonToAudioAndText = async (
   base64Audio: string, 
@@ -198,19 +192,23 @@ export const alignJsonToAudioAndText = async (
 ): Promise<string> => {
   const aiClient = getAiClient();
   const prompt = `
-    ROLE: Forced Aligner (High Precision).
+    ROLE: Linear Forced Aligner (Structural Integrity Specialist).
     
-    SOURCE TEXT (Absolute Truth):
+    REFERENCE TEXT:
     "${referenceText}"
 
-    JSON SKELETON (Old Structure):
+    JSON CONTAINER (MUST PRESERVE EXACT STRUCTURE):
     ${jsonSkeleton}
 
     TASK:
-    1. Distribute the SOURCE TEXT into the "transcription" fields of the JSON SKELETON.
-    2. ABSOLUTE CONSTRAINT: The resulting JSON structure MUST be identical to the JSON SKELETON. Do NOT add, remove, or rename any keys (id, start, end, speaker, duration, etc).
-    3. ONLY modify the content of the "transcription" property.
-    4. Return the COMPLETE, valid JSON object.
+    1. Map the REFERENCE TEXT into the "transcription" fields of the JSON CONTAINER.
+    2. **STRUCTURAL LOCKDOWN**: DO NOT modify the JSON structure. Do not add brackets, do not remove keys, do not change order. Return ONLY the valid JSON object.
+    3. **LINE-BREAK ANCHORING**: Treat every NEW LINE in the Reference Text as a hard signal for a new speaker segment. Use this to prevent words from one speaker "bleeding" into the segment of the next speaker.
+    4. **LINEAR CONSUMPTION**: Treat words as a one-way queue. Once a word is assigned, it is consumed and cannot be repeated in the next segment.
+    5. **NO PUNCTUATION**: Ensure all transcription fields in the JSON remain raw and without punctuation.
+    6. **VERBATIM TUNISIAN**: Keep all Tunisian dialect words (e.g. فما) exactly as provided in the Reference Text.
+
+    OUTPUT: Return ONLY the valid JSON.
   `;
 
   const response = await aiClient.models.generateContent({
@@ -221,7 +219,7 @@ export const alignJsonToAudioAndText = async (
         { text: prompt }
       ]
     },
-    config: { responseMimeType: "application/json", temperature: 0.1 }
+    config: { responseMimeType: "application/json", temperature: 0.0 }
   });
 
   return response.text || jsonSkeleton;

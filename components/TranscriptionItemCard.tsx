@@ -54,7 +54,7 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
     if (item.status === ProcessingStatus.VALIDATING_JSON) {
       return (
         <div className="flex items-center text-indigo-600 text-[9px] font-black animate-pulse p-2 bg-indigo-50/50 dark:bg-indigo-900/10 rounded-lg border border-indigo-100 dark:border-indigo-900/30">
-           <i className="fa-solid fa-microscope fa-spin mr-2"></i> AGENTS TRIANGULATING EVIDENCE...
+           <i className="fa-solid fa-microscope fa-spin mr-2"></i> PERFORMING ACOUSTIC QA...
         </div>
       );
     }
@@ -64,17 +64,17 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
       return (
         <div className="mt-2 space-y-1.5">
           <div className="flex justify-between items-center px-1">
-            <span className="text-[8px] font-black uppercase text-rose-600">QA Rejection Logs</span>
+            <span className="text-[8px] font-black uppercase text-rose-600">QA Error Log</span>
             <div className="flex gap-1">
               <button onClick={() => onRetry(item.id)} className="text-[7px] font-black px-1.5 py-0.5 bg-slate-100 dark:bg-slate-700 rounded border border-slate-200 dark:border-slate-600">RETRY</button>
-              <button onClick={() => onSkipValidation(item.id)} className="text-[7px] font-black px-1.5 py-0.5 bg-slate-900 text-white rounded">SKIP</button>
+              <button onClick={() => onSkipValidation(item.id)} className="text-[7px] font-black px-1.5 py-0.5 bg-slate-900 text-white rounded">IGNORE & SKIP</button>
             </div>
           </div>
           <div className="space-y-1 max-h-32 overflow-auto scrollbar-hide">
             {errors.map((err, i) => (
               <div key={i} className="bg-rose-50/50 dark:bg-rose-950/20 p-2 rounded-lg border border-rose-100 dark:border-rose-900/50">
                 <div className="flex justify-between items-center mb-0.5">
-                  <span className="text-[8px] font-black text-rose-800 dark:text-rose-400 uppercase tracking-tight">{err.tag}</span>
+                  <span className="text-[8px] font-black text-rose-800 dark:text-rose-400 uppercase tracking-tight">[{err.tag}]</span>
                   <span className="text-[7px] font-mono text-slate-400 bg-white/50 dark:bg-black/20 px-1 rounded">{err.time}</span>
                 </div>
                 <p className="text-[10px] text-rose-900 dark:text-rose-100 leading-tight">{err.description}</p>
@@ -87,24 +87,23 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
 
     if (item.validationReport?.isValid) {
       return (
-        <div className="mt-2 p-2.5 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/50 rounded-xl shadow-sm ring-1 ring-emerald-500/10">
+        <div className="mt-2 p-3 bg-emerald-50 dark:bg-emerald-950/20 border-2 border-emerald-400 dark:border-emerald-800 rounded-xl shadow-lg ring-1 ring-emerald-500/10">
            <div className="flex items-center justify-between mb-2">
               <div className="flex items-center">
                 <div className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center mr-2 shadow-sm">
                   <i className="fa-solid fa-check text-[10px]"></i>
                 </div>
-                <span className="text-[9px] font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-widest">Acoustic Check: Clean</span>
+                <span className="text-[10px] font-black text-emerald-800 dark:text-emerald-300 uppercase tracking-widest">ACOUSTIC VERIFICATION PASSED</span>
               </div>
-              <span className="text-[7px] font-bold text-emerald-600 dark:text-emerald-500 bg-emerald-100 dark:bg-emerald-900/40 px-2 py-0.5 rounded-full">READY</span>
            </div>
-           <div className="grid grid-cols-2 gap-3 border-t border-emerald-100 dark:border-emerald-800/50 pt-2 text-[8px] font-black uppercase tracking-tighter">
-              <div className="flex justify-between">
-                 <span className="text-slate-400">Voices:</span>
-                 <span className="text-emerald-600 dark:text-emerald-400">{item.validationReport.stats.audioSpeakerCount}</span>
+           <div className="grid grid-cols-2 gap-4 border-t border-emerald-200 dark:border-emerald-800 pt-2">
+              <div className="flex flex-col">
+                 <span className="text-[7px] font-black text-slate-400 uppercase">Speakers Detected</span>
+                 <span className="text-[12px] font-black text-emerald-600 dark:text-emerald-400">{item.validationReport.stats.audioSpeakerCount}</span>
               </div>
-              <div className="flex justify-between">
-                 <span className="text-slate-400">Integrity:</span>
-                 <span className="text-emerald-600 dark:text-emerald-400">100%</span>
+              <div className="flex flex-col">
+                 <span className="text-[7px] font-black text-slate-400 uppercase">Status</span>
+                 <span className="text-[12px] font-black text-emerald-600 dark:text-emerald-400">READY</span>
               </div>
            </div>
         </div>
@@ -157,26 +156,26 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
            <div className="space-y-2">
-              <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest pl-1 block">Step 1: JSON Structure</label>
+              <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest pl-1 block">Step 1: JSON Architecture</label>
               <textarea 
                 value={item.inputJson}
                 onChange={(e) => onUpdateJsonInput(item.id, e.target.value)}
                 disabled={isProcessing || item.status !== ProcessingStatus.IDLE}
-                placeholder="Paste original JSON..."
+                placeholder="Paste original JSON structure..."
                 className="w-full h-32 p-3 text-[9px] font-mono rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-1 focus:ring-indigo-500 outline-none resize-none transition-shadow"
               />
               {renderValidationUI()}
               {item.status === ProcessingStatus.IDLE && (
-                <button onClick={() => onValidate(item.id)} disabled={!item.inputJson.trim()} className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md shadow-indigo-500/10 disabled:opacity-50 disabled:cursor-not-allowed">Verify Acoustics</button>
+                <button onClick={() => onValidate(item.id)} disabled={!item.inputJson.trim()} className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md shadow-indigo-500/10 disabled:opacity-50 disabled:cursor-not-allowed">Run Acoustic Scan</button>
               )}
            </div>
 
            <div className="space-y-2">
-              <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest pl-1 block">Step 2: Verbatim Review</label>
+              <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest pl-1 block">Step 2: Verbatim Content</label>
               {item.status === ProcessingStatus.READY_TO_TRANSCRIBE ? (
                 <button onClick={() => onTranscribeDraft(item.id)} className="w-full h-32 flex flex-col items-center justify-center bg-indigo-50/30 dark:bg-indigo-900/10 border-2 border-dashed border-indigo-200 dark:border-indigo-800/50 rounded-xl hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all group">
                    <div className="w-10 h-10 rounded-full bg-white dark:bg-slate-800 flex items-center justify-center mb-2 shadow-sm group-hover:scale-110 transition-transform"><i className="fa-solid fa-wand-magic-sparkles text-indigo-600 text-[12px]"></i></div>
-                   <span className="text-indigo-900 dark:text-indigo-300 font-black uppercase text-[8px] tracking-widest">Generate Draft</span>
+                   <span className="text-indigo-900 dark:text-indigo-300 font-black uppercase text-[8px] tracking-widest">Generate Verbatim Draft</span>
                 </button>
               ) : (item.status === ProcessingStatus.TRANSCRIBING || item.status === ProcessingStatus.TEXT_READY || item.status === ProcessingStatus.ALIGNING || item.status === ProcessingStatus.COMPLETED) ? (
                  <div className="space-y-2">
@@ -184,16 +183,16 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
                         value={item.finalTranscription || ""}
                         onChange={(e) => onUpdateDraftText(item.id, e.target.value)}
                         disabled={item.status !== ProcessingStatus.TEXT_READY}
-                        placeholder="Review text content here..."
+                        placeholder="Review final draft text..."
                         className="w-full h-32 p-3 text-[11px] arabic-text rounded-xl border border-indigo-100 dark:border-indigo-900/30 bg-white dark:bg-slate-900 focus:ring-1 focus:ring-emerald-500 outline-none leading-[2] text-slate-800 dark:text-slate-100"
                     />
                     {item.status === ProcessingStatus.TEXT_READY && (
-                        <button onClick={() => onAlignJson(item.id)} className="w-full py-2.5 bg-emerald-600 text-white rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-md shadow-emerald-500/10">Apply to JSON</button>
+                        <button onClick={() => onAlignJson(item.id)} className="w-full py-2.5 bg-emerald-600 text-white rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-md shadow-emerald-500/10">Align to Structure</button>
                     )}
                     {item.status === ProcessingStatus.COMPLETED && (
                         <div className="p-2 bg-slate-900 rounded-xl border border-slate-700 shadow-inner">
                              <div className="flex justify-between items-center mb-1.5 px-1">
-                                <span className="text-[7px] font-black text-slate-500 uppercase tracking-widest">Final Output</span>
+                                <span className="text-[7px] font-black text-slate-500 uppercase tracking-widest">Aligned JSON</span>
                                 <button onClick={handleCopy} className={`px-2 py-0.5 rounded text-[7px] font-black uppercase transition-all flex items-center gap-1.5 ${isCopied ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white'}`}>
                                    <i className={`fa-solid ${isCopied ? 'fa-check' : 'fa-copy'}`}></i> {isCopied ? 'Copied' : 'Copy'}
                                 </button>
@@ -210,7 +209,7 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
                       <i className="fa-solid fa-hourglass-half text-slate-300 dark:text-slate-700 text-lg"></i>
                       <div className="absolute -top-1 -right-1 w-2 h-2 bg-slate-200 dark:bg-slate-700 rounded-full animate-ping"></div>
                    </div>
-                   <span className="text-slate-400 dark:text-slate-600 text-[8px] font-black uppercase tracking-[0.2em]">Step 1 Pending</span>
+                   <span className="text-slate-400 dark:text-slate-600 text-[8px] font-black uppercase tracking-[0.2em]">Awaiting Step 1</span>
                 </div>
               )}
            </div>
