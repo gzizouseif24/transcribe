@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { TranscriptionItem, ProcessingStatus, ValidationError } from '../types';
 
@@ -9,17 +8,21 @@ interface TranscriptionItemCardProps {
   onAudit: (id: string) => void;
   onTranscribe: (id: string) => void;
   onUpdateDraftText: (id: string, text: string) => void;
+  onUpdateJsonOutput: (id: string, json: string) => void;
   onModelChange: (id: string, model: string) => void;
   onRetry: (id: string) => void;
   onApplyFixes: (id: string, activeErrors: ValidationError[]) => void;
   onDismissError: (id: string, index: number) => void;
   onAddCustomError: (id: string, error: ValidationError) => void;
+  onPushToSheet: (id: string, accepted: 'Yes' | 'No') => Promise<'success' | 'error'>;
+  canPush: boolean;
 }
 
 export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({ 
   item, onRemove, onUpdateJsonInput, onAudit, onTranscribe,
-  onUpdateDraftText, onModelChange, onRetry,
-  onApplyFixes, onDismissError, onAddCustomError
+  onUpdateDraftText, onUpdateJsonOutput, onModelChange, onRetry,
+  onApplyFixes, onDismissError, onAddCustomError,
+  onPushToSheet, canPush
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
@@ -27,6 +30,8 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
   const [duration, setDuration] = useState(0);
   const [isCopied, setIsCopied] = useState(false);
   const [customPrompt, setCustomPrompt] = useState('');
+  const [pushStatus, setPushStatus] = useState<'idle' | 'pushing' | 'success' | 'error'>('idle');
+  const [isScriptExpanded, setIsScriptExpanded] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
@@ -54,6 +59,15 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
       setCurrentTime(seconds);
       audioRef.current.play();
       setIsPlaying(true);
+    }
+  };
+
+  const handlePush = async (accepted: 'Yes' | 'No') => {
+    setPushStatus('pushing');
+    const result = await onPushToSheet(item.id, accepted);
+    setPushStatus(result);
+    if (result === 'success') {
+      setTimeout(() => setPushStatus('idle'), 3000);
     }
   };
 
@@ -85,7 +99,12 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
           <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
             <i className="fa-solid fa-microscope text-xs"></i>
           </div>
-          <h3 className="text-[11px] font-black uppercase tracking-tight text-slate-800 dark:text-slate-100">{item.fileName}</h3>
+          <div>
+            <h3 className="text-[11px] font-black uppercase tracking-tight text-slate-800 dark:text-slate-100">{item.fileName}</h3>
+            {item.rowNumber && (
+              <span className="text-[8px] text-slate-400 font-mono">Row {item.rowNumber}</span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <select value={item.model} onChange={(e) => onModelChange(item.id, e.target.value)} disabled={isBusy} className="text-[8px] font-black bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 px-2 py-1 rounded-md outline-none uppercase transition-all">
@@ -96,7 +115,7 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
         </div>
       </div>
 
-      <audio ref={audioRef} src={item.previewUrl} onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)} onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)} className="hidden" />
+      <audio ref={audioRef} src={item.previewUrl || undefined} onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)} onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)} className="hidden" />
 
       <div className="p-4 space-y-6">
         {item.validationReport?.requiresManualReview && (
@@ -223,27 +242,32 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
            {/* STEP 2: REPAIR */}
            <div className="space-y-4">
               <div className="flex items-center justify-between px-1">
-                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Master Script (Correction source)</label>
-                <button onClick={() => onTranscribe(item.id)} disabled={isBusy} className="text-[9px] font-black text-indigo-600 uppercase hover:underline flex items-center gap-1.5">
+                <button onClick={() => setIsScriptExpanded(!isScriptExpanded)} className="flex items-center gap-2 text-[9px] font-black text-slate-400 uppercase tracking-widest hover:text-slate-300 transition-colors">
+                  <i className={`fa-solid fa-chevron-${isScriptExpanded ? 'down' : 'right'}`}></i>
+                  Master Script (Correction source)
+                </button>
+                <button onClick={() => { setIsScriptExpanded(true); onTranscribe(item.id); }} disabled={isBusy} className="text-[9px] font-black text-indigo-600 uppercase hover:underline flex items-center gap-1.5">
                    <i className={`fa-solid fa-wand-magic-sparkles ${item.status === ProcessingStatus.TRANSCRIBING ? 'fa-spin' : ''}`}></i>
                    Generate Draft Script
                 </button>
               </div>
 
-              <div className="relative">
-                <textarea 
-                   value={item.finalTranscription || ""}
-                   onChange={(e) => onUpdateDraftText(item.id, e.target.value)}
-                   disabled={isBusy && item.status !== ProcessingStatus.TRANSCRIBING}
-                   placeholder="Review or manually edit the script here..."
-                   className="w-full h-56 p-5 text-[14px] arabic-text leading-[2] rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 focus:ring-2 focus:ring-emerald-500 outline-none resize-none transition-all shadow-inner scrollbar-hide"
-                />
-                {item.status === ProcessingStatus.TRANSCRIBING && (
-                  <div className="absolute inset-0 bg-emerald-500/5 dark:bg-emerald-500/10 backdrop-blur-[1px] flex items-center justify-center rounded-2xl z-10">
-                     <div className="w-10 h-10 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
-                  </div>
-                )}
-              </div>
+              {isScriptExpanded && (
+                <div className="relative animate-in fade-in slide-in-from-top-2">
+                  <textarea 
+                     value={item.finalTranscription || ""}
+                     onChange={(e) => onUpdateDraftText(item.id, e.target.value)}
+                     disabled={isBusy && item.status !== ProcessingStatus.TRANSCRIBING}
+                     placeholder="Review or manually edit the script here..."
+                     className="w-full h-56 p-5 text-[14px] arabic-text leading-[2] rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 focus:ring-2 focus:ring-emerald-500 outline-none resize-none transition-all shadow-inner scrollbar-hide"
+                  />
+                  {item.status === ProcessingStatus.TRANSCRIBING && (
+                    <div className="absolute inset-0 bg-emerald-500/5 dark:bg-emerald-500/10 backdrop-blur-[1px] flex items-center justify-center rounded-2xl z-10">
+                       <div className="w-10 h-10 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="p-4 bg-slate-50 dark:bg-slate-800/30 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4">
                  <div className="text-center">
@@ -259,18 +283,101 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
                  </button>
               </div>
 
+              {/* COMPLETED: copy + push to sheet */}
               {item.status === ProcessingStatus.COMPLETED && (
-                 <div className="mt-4 p-4 bg-slate-900 rounded-2xl border border-slate-800 shadow-2xl animate-in fade-in slide-in-from-bottom-2">
-                    <div className="flex justify-between items-center mb-3">
+                 <div className="mt-4 p-4 bg-slate-900 rounded-2xl border border-slate-800 shadow-2xl animate-in fade-in slide-in-from-bottom-2 space-y-3">
+                    <div className="flex justify-between items-center">
                        <span className="text-[9px] font-black text-emerald-500 uppercase">REPAIRED JSON READY</span>
                        <button onClick={() => { navigator.clipboard.writeText(item.jsonOutput || ''); setIsCopied(true); setTimeout(() => setIsCopied(false), 2000); }} className={`text-[8px] font-black px-3 py-1 rounded-md transition-all ${isCopied ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300'}`}>
                           {isCopied ? 'Copied' : 'Copy Result'}
                        </button>
                     </div>
-                    <div className="h-20 overflow-y-auto text-[9px] font-mono text-indigo-400/80 bg-black/40 p-3 rounded-xl scrollbar-hide select-all border border-slate-800">
-                       {item.jsonOutput}
-                    </div>
+                    <textarea 
+                       value={item.jsonOutput || ''}
+                       onChange={(e) => onUpdateJsonOutput(item.id, e.target.value)}
+                       className="w-full h-64 text-[10px] font-mono text-indigo-400/80 bg-black/40 p-3 rounded-xl scrollbar-hide border border-slate-800 focus:ring-1 focus:ring-emerald-500 outline-none resize-y"
+                    />
+
+                    {/* PUSH TO SHEET */}
+                    {canPush && (
+                      <div className="pt-2 border-t border-slate-800 space-y-2">
+                        <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center">Push to Sheet</p>
+                        
+                        {pushStatus === 'success' && (
+                          <div className="px-3 py-2 bg-emerald-900/30 border border-emerald-700 rounded-xl text-center">
+                            <p className="text-[9px] text-emerald-400 font-black uppercase">
+                              <i className="fa-solid fa-circle-check mr-1.5"></i>Pushed! Row {item.rowNumber} updated
+                            </p>
+                          </div>
+                        )}
+
+                        {pushStatus === 'error' && (
+                          <div className="px-3 py-2 bg-rose-900/30 border border-rose-700 rounded-xl text-center">
+                            <p className="text-[9px] text-rose-400 font-black uppercase">
+                              <i className="fa-solid fa-triangle-exclamation mr-1.5"></i>Push failed — check console
+                            </p>
+                          </div>
+                        )}
+
+                        {pushStatus !== 'success' && (
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              onClick={() => handlePush('Yes')}
+                              disabled={pushStatus === 'pushing'}
+                              className="py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-900/30"
+                            >
+                              {pushStatus === 'pushing' ? (
+                                <i className="fa-solid fa-spinner fa-spin"></i>
+                              ) : (
+                                <><i className="fa-solid fa-check"></i> Accept</>
+                              )}
+                            </button>
+                            <button
+                              onClick={() => handlePush('No')}
+                              disabled={pushStatus === 'pushing'}
+                              className="py-2.5 bg-rose-700 hover:bg-rose-600 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                            >
+                              {pushStatus === 'pushing' ? (
+                                <i className="fa-solid fa-spinner fa-spin"></i>
+                              ) : (
+                                <><i className="fa-solid fa-xmark"></i> Reject</>
+                              )}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                  </div>
+              )}
+
+              {/* PASS WITHOUT FIX: push original JSON as accepted */}
+              {item.status === ProcessingStatus.READY_TO_FIX && item.validationReport?.isValid && canPush && (
+                <div className="p-4 bg-emerald-900/20 border border-emerald-800 rounded-2xl space-y-3">
+                  <p className="text-[9px] font-black text-emerald-400 uppercase tracking-wider text-center">
+                    <i className="fa-solid fa-circle-check mr-1.5"></i>No errors — push original as accepted?
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => handlePush('Yes')}
+                      disabled={pushStatus === 'pushing'}
+                      className="py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                    >
+                      {pushStatus === 'pushing' ? <i className="fa-solid fa-spinner fa-spin"></i> : <><i className="fa-solid fa-check"></i> Accept</>}
+                    </button>
+                    <button
+                      onClick={() => handlePush('No')}
+                      disabled={pushStatus === 'pushing'}
+                      className="py-2.5 bg-rose-700 hover:bg-rose-600 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                    >
+                      {pushStatus === 'pushing' ? <i className="fa-solid fa-spinner fa-spin"></i> : <><i className="fa-solid fa-xmark"></i> Reject</>}
+                    </button>
+                  </div>
+                  {pushStatus === 'success' && (
+                    <p className="text-[9px] text-emerald-400 font-black uppercase text-center">
+                      <i className="fa-solid fa-circle-check mr-1.5"></i>Row {item.rowNumber} updated!
+                    </p>
+                  )}
+                </div>
               )}
            </div>
         </div>

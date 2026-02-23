@@ -25,6 +25,7 @@ const App: React.FC = () => {
   const [items, setItems] = useState<TranscriptionItem[]>([]);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [darkMode, setDarkMode] = useState(true);
+  const [scriptUrl, setScriptUrl] = useState(''); // shared between importer + push
 
   useEffect(() => {
     const checkKey = async () => {
@@ -48,21 +49,9 @@ const App: React.FC = () => {
     }
   };
 
-
-  // SHEET IMPORT HANDLER
-const handleSheetImport = (rows: ImportedRow[]) => {
-  
-  // TEMP DEBUG
-  console.log('Imported rows:', rows.map(r => ({
-    fileName: r.fileName,
-    hasAudio: r.audioUrl !== '',
-    fileSize: r.file.size,
-    mimeType: r.mimeType,
-    audioError: r.audioError,
-    hasBase64: !!r.audioBase64
-  })));
-
-  const newItems: TranscriptionItem[] = rows.map(row => ({
+  // ─── SHEET IMPORT ────────────────────────────────────────────────────────────
+  const handleSheetImport = (rows: ImportedRow[]) => {
+    const newItems: TranscriptionItem[] = rows.map(row => ({
       id: generateId(),
       file: row.file,
       audioBase64: row.audioBase64,
@@ -73,10 +62,39 @@ const handleSheetImport = (rows: ImportedRow[]) => {
       inputJson: row.json,
       addedAt: Date.now(),
       model: 'gemini-3-flash-preview',
-      error: row.audioError
+      error: row.audioError,
+      rowNumber: row.rowNumber, // carry row index for push-back
     }));
     setItems(prev => [...newItems, ...prev]);
   };
+
+  // ─── PUSH TO SHEET ────────────────────────────────────────────────────────────
+const handlePushToSheet = async (id: string, accepted: 'Yes' | 'No'): Promise<'success' | 'error'> => {
+  const item = items.find(i => i.id === id);
+  if (!item || !item.rowNumber || !scriptUrl) return 'error';
+
+  const correctedJson = item.jsonOutput || item.inputJson;
+
+  try {
+    await fetch(scriptUrl, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'push',
+        rowNumber: item.rowNumber,
+        jsonContent: correctedJson,
+        reviewed: true,
+        accepted: accepted,
+      })
+    });
+    return 'success';
+  } catch (e: any) {
+    console.error('Push failed:', e.message);
+    return 'error';
+  }
+};
+  // ─────────────────────────────────────────────────────────────────────────────
 
   const getBase64ForGemini = async (item: TranscriptionItem) => {
     let b64 = item.audioBase64;
@@ -155,7 +173,6 @@ const handleSheetImport = (rows: ImportedRow[]) => {
   const handleApplyFixes = async (id: string, activeErrors: ValidationError[]) => {
     const item = items.find(i => i.id === id);
     if (!item) return;
-
     setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.REPAIRING_JSON } : i));
     try {
       const base64Audio = await getBase64ForGemini(item);
@@ -236,8 +253,12 @@ const handleSheetImport = (rows: ImportedRow[]) => {
       </header>
 
       <main className="max-w-5xl mx-auto p-8 space-y-6">
-        {/* Sheet Auto-Import — sits above the file uploader */}
-        <SheetImporter onImport={handleSheetImport} isLoading={false} />
+        <SheetImporter
+          onImport={handleSheetImport}
+          isLoading={false}
+          scriptUrl={scriptUrl}
+          onScriptUrlChange={setScriptUrl}
+        />
 
         <FileUploader onFilesSelected={handleFilesSelected} onUrlsSelected={handleUrlsSelected} />
 
@@ -250,11 +271,14 @@ const handleSheetImport = (rows: ImportedRow[]) => {
               onAudit={handleAudit}
               onTranscribe={handleTranscribe}
               onUpdateDraftText={(id, t) => setItems(prev => prev.map(i => i.id === id ? { ...i, finalTranscription: t } : i))}
+              onUpdateJsonOutput={(id, json) => setItems(prev => prev.map(i => i.id === id ? { ...i, jsonOutput: json } : i))}
               onModelChange={(id, m) => setItems(prev => prev.map(i => i.id === id ? { ...i, model: m } : i))}
               onRetry={id => setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.IDLE, validationReport: undefined, error: undefined } : i))}
               onApplyFixes={handleApplyFixes}
               onDismissError={handleDismissError}
               onAddCustomError={handleAddCustomError}
+              onPushToSheet={handlePushToSheet}
+              canPush={!!scriptUrl && !!item.rowNumber}
             />
           ))}
         </section>

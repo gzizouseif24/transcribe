@@ -8,15 +8,17 @@ export interface ImportedRow {
   fileName: string;
   audioError?: string;
   audioBase64?: string;
+  rowNumber: number; // <-- row index in the sheet
 }
 
 interface SheetImporterProps {
   onImport: (rows: ImportedRow[]) => void;
   isLoading: boolean;
+  scriptUrl: string;
+  onScriptUrlChange: (url: string) => void;
 }
 
-export const SheetImporter: React.FC<SheetImporterProps> = ({ onImport, isLoading }) => {
-  const [scriptUrl, setScriptUrl] = useState('');
+export const SheetImporter: React.FC<SheetImporterProps> = ({ onImport, isLoading, scriptUrl, onScriptUrlChange }) => {
   const [startRow, setStartRow] = useState('');
   const [endRow, setEndRow] = useState('');
   const [status, setStatus] = useState<'idle' | 'fetching' | 'done' | 'error'>('idle');
@@ -39,8 +41,8 @@ export const SheetImporter: React.FC<SheetImporterProps> = ({ onImport, isLoadin
       return;
     }
 
-    if (end - start + 1 > 10) {
-      setErrorMsg('Max 10 rows at a time — audio fetching is heavy, keep it small.');
+    if (end - start + 1 > 15) {
+      setErrorMsg('Max 15 rows at a time — audio fetching is heavy, keep it small.');
       setStatus('error');
       return;
     }
@@ -54,8 +56,7 @@ export const SheetImporter: React.FC<SheetImporterProps> = ({ onImport, isLoadin
       if (!res.ok) throw new Error(`HTTP ${res.status} — check your Apps Script deployment.`);
 
       const data = await res.json();
-      console.log('Raw from Apps Script:', JSON.stringify(data.rows?.[0]).substring(0, 300));
-      const rows: { audioBase64: string; mimeType: string; json: string; fileName: string }[] = data.rows || [];
+      const rows: { audioBase64: string; mimeType: string; json: string; fileName: string; rowNumber: number }[] = data.rows || [];
 
       if (rows.length === 0) {
         throw new Error('No rows returned. Check the row range and Apps Script column indices.');
@@ -77,7 +78,6 @@ export const SheetImporter: React.FC<SheetImporterProps> = ({ onImport, isLoadin
               file = new Blob([bytes], { type: forcedMime });
               audioUrl = URL.createObjectURL(file);
             } catch (decodeErr: any) {
-              console.error('Decode error:', decodeErr.message, 'base64 length:', r.audioBase64?.length);
               audioError = 'Failed to decode audio: ' + decodeErr.message;
             }
           } else if (r.audioBase64?.startsWith('ERROR')) {
@@ -91,7 +91,8 @@ export const SheetImporter: React.FC<SheetImporterProps> = ({ onImport, isLoadin
             json: r.json || '',
             fileName: r.fileName || `Row_${start + i}`,
             audioError,
-            audioBase64: r.audioBase64
+            audioBase64: r.audioBase64,
+            rowNumber: r.rowNumber || (start + i), // row index from Apps Script
           };
         });
 
@@ -140,13 +141,13 @@ export const SheetImporter: React.FC<SheetImporterProps> = ({ onImport, isLoadin
             </p>
           </div>
 
-          {/* Apps Script URL */}
+          {/* Apps Script URL — lifted to App level so push can reuse it */}
           <div className="space-y-1.5">
             <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Apps Script Web App URL</label>
             <input
               type="text"
               value={scriptUrl}
-              onChange={(e) => setScriptUrl(e.target.value)}
+              onChange={(e) => onScriptUrlChange(e.target.value)}
               placeholder="https://script.google.com/macros/s/.../exec"
               className="w-full px-4 py-2.5 text-[11px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 focus:ring-2 focus:ring-emerald-500 outline-none transition-all font-mono"
             />
@@ -181,7 +182,7 @@ export const SheetImporter: React.FC<SheetImporterProps> = ({ onImport, isLoadin
           <div className="px-3 py-2 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-100 dark:border-amber-800">
             <p className="text-[9px] text-amber-600 dark:text-amber-400 uppercase tracking-wider">
               <i className="fa-solid fa-triangle-exclamation mr-1.5"></i>
-              Max 10 rows at a time — fetching audio takes ~5–15 seconds
+              Max 15 rows at a time — fetching audio takes ~1–2 mins
             </p>
           </div>
 
