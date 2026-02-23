@@ -76,7 +76,9 @@ export const runAcousticAudit = async (
     config: { responseMimeType: "application/json", temperature: 0.1 }
   });
 
-  const result = JSON.parse(response.text || '{"errors":[]}');
+  const text = response.text || '{"errors":[]}';
+  const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+  const result = JSON.parse(cleanText);
   let jsonSpeakers = 0;
   try {
     const data = JSON.parse(jsonSkeleton);

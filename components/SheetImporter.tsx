@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 
-interface ImportedRow {
+export interface ImportedRow {
   audioUrl: string;
   file: Blob;
   mimeType: string;
   json: string;
   fileName: string;
   audioError?: string;
+  audioBase64?: string;
 }
 
 interface SheetImporterProps {
@@ -72,7 +73,8 @@ export const SheetImporter: React.FC<SheetImporterProps> = ({ onImport, isLoadin
               const binary = atob(r.audioBase64.replace(/\s/g, ''));
               const bytes = new Uint8Array(binary.length);
               for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
-              file = new Blob([bytes], { type: r.mimeType || 'audio/wav' });
+              const forcedMime = r.mimeType && r.mimeType !== 'binary/octet-stream' ? r.mimeType : 'audio/wav';
+              file = new Blob([bytes], { type: forcedMime });
               audioUrl = URL.createObjectURL(file);
             } catch (decodeErr: any) {
               console.error('Decode error:', decodeErr.message, 'base64 length:', r.audioBase64?.length);
@@ -85,10 +87,11 @@ export const SheetImporter: React.FC<SheetImporterProps> = ({ onImport, isLoadin
           return {
             audioUrl,
             file,
-            mimeType: r.mimeType || 'audio/wav',
+            mimeType: r.mimeType && r.mimeType !== 'binary/octet-stream' ? r.mimeType : 'audio/wav',
             json: r.json || '',
             fileName: r.fileName || `Row_${start + i}`,
-            audioError
+            audioError,
+            audioBase64: r.audioBase64
           };
         });
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { FileUploader } from './components/FileUploader';
 import { TranscriptionItemCard } from './components/TranscriptionItemCard';
-import { SheetImporter } from './components/SheetImporter';
+import { SheetImporter, ImportedRow } from './components/SheetImporter';
 import { TranscriptionItem, ProcessingStatus, ValidationError } from './types';
 import { 
   blobToBase64, 
@@ -50,7 +50,7 @@ const App: React.FC = () => {
 
 
   // SHEET IMPORT HANDLER
-const handleSheetImport = (rows: { audioUrl: string; file: Blob; mimeType: string; json: string; fileName: string; audioError?: string }[]) => {
+const handleSheetImport = (rows: ImportedRow[]) => {
   
   // TEMP DEBUG
   console.log('Imported rows:', rows.map(r => ({
@@ -58,12 +58,14 @@ const handleSheetImport = (rows: { audioUrl: string; file: Blob; mimeType: strin
     hasAudio: r.audioUrl !== '',
     fileSize: r.file.size,
     mimeType: r.mimeType,
-    audioError: r.audioError
+    audioError: r.audioError,
+    hasBase64: !!r.audioBase64
   })));
 
   const newItems: TranscriptionItem[] = rows.map(row => ({
       id: generateId(),
       file: row.file,
+      audioBase64: row.audioBase64,
       fileName: row.fileName,
       mimeType: row.mimeType || 'audio/wav',
       previewUrl: row.audioUrl || '',
@@ -76,12 +78,23 @@ const handleSheetImport = (rows: { audioUrl: string; file: Blob; mimeType: strin
     setItems(prev => [...newItems, ...prev]);
   };
 
+  const getBase64ForGemini = async (item: TranscriptionItem) => {
+    let b64 = item.audioBase64;
+    if (!b64) {
+      b64 = await blobToBase64(item.file);
+    }
+    if (b64 && b64.includes(',')) {
+      b64 = b64.split(',')[1];
+    }
+    return b64 ? b64.replace(/\s/g, '') : '';
+  };
+
   const handleAudit = async (id: string) => {
     const item = items.find(i => i.id === id);
     if (!item || !item.inputJson) return;
     setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.AUDITING } : i));
     try {
-      const base64Audio = await blobToBase64(item.file);
+      const base64Audio = await getBase64ForGemini(item);
       const report = await runAcousticAudit(base64Audio, item.mimeType, item.inputJson, item.model);
       setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.READY_TO_FIX, validationReport: report } : i));
     } catch (e: any) {
@@ -95,7 +108,7 @@ const handleSheetImport = (rows: { audioUrl: string; file: Blob; mimeType: strin
     if (!item) return;
     setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.TRANSCRIBING } : i));
     try {
-      const base64Audio = await blobToBase64(item.file);
+      const base64Audio = await getBase64ForGemini(item);
       const text = await generateVerbatimScript(base64Audio, item.mimeType, item.model, (t) => {
           setItems(prev => prev.map(i => i.id === id ? { ...i, finalTranscription: t } : i));
       });
@@ -129,7 +142,7 @@ const handleSheetImport = (rows: { audioUrl: string; file: Blob; mimeType: strin
 
     setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.REPAIRING_JSON } : i));
     try {
-      const base64Audio = await blobToBase64(item.file);
+      const base64Audio = await getBase64ForGemini(item);
       const repaired = await applyUnifiedFixes(
         base64Audio, 
         item.mimeType, 

@@ -32,6 +32,7 @@ export interface ValidationReport {
 export interface TranscriptionItem {
   id: string;
   file: File | Blob;
+  audioBase64?: string;
   fileName: string;
   mimeType: string;
   previewUrl: string;

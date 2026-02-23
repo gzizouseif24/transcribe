@@ -166,6 +166,15 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
                 </div>
               )}
 
+              {item.error && (
+                <div className="px-4 py-3 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 rounded-xl">
+                  <p className="text-[10px] text-rose-600 dark:text-rose-400 font-medium">
+                    <i className="fa-solid fa-triangle-exclamation mr-1.5"></i>
+                    {item.error}
+                  </p>
+                </div>
+              )}
+
               <button onClick={() => onAudit(item.id)} disabled={isBusy || !item.inputJson.trim()} className="w-full py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg disabled:opacity-50">
                  Run Acoustic Scan
               </button>
