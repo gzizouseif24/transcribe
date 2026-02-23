@@ -1,28 +1,31 @@
+
 export enum ProcessingStatus {
   IDLE = 'IDLE',                         
-  VALIDATING_JSON = 'VALIDATING_JSON',   
-  READY_TO_TRANSCRIBE = 'READY_TO_TRANSCRIBE', 
+  AUDITING = 'AUDITING',   
+  READY_TO_FIX = 'READY_TO_FIX', 
   TRANSCRIBING = 'TRANSCRIBING',         
   TEXT_READY = 'TEXT_READY',             
   ALIGNING = 'ALIGNING',                 
   COMPLETED = 'COMPLETED',               
+  REPAIRING_JSON = 'REPAIRING_JSON',
+  RECONSTRUCTING_JSON = 'RECONSTRUCTING_JSON',
   ERROR = 'ERROR',
 }
 
 export interface ValidationError {
-  tag: string;       // English Tag Name
-  time: string;      // Timestamp or Segment ID
-  description: string; // Brief reason in Arabic/English
+  tag: 'SPEAKER' | 'TIMING' | 'CONTENT' | 'STRUCTURE' | 'PUNCTUATION';
+  time: string;      
+  description: string; 
+  severity: 'CRITICAL' | 'WARNING';
 }
 
 export interface ValidationReport {
   isValid: boolean;
-  errors: ValidationError[]; // Now structured objects
-  warnings: string[];
+  errors: ValidationError[];
   stats: {
-    audioSpeakerCount: number;
-    jsonSpeakerCount: number;
-    segmentCount: number;
+    detectedSpeakers: number;
+    jsonSpeakers: number;
+    confidenceScore: number;
   }
 }
 
@@ -40,10 +43,4 @@ export interface TranscriptionItem {
   error?: string;
   addedAt: number;
   model: string;
-}
-
-export interface ProcessingStats {
-  total: number;
-  completed: number;
-  processing: number;
 }

@@ -2,8 +2,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ValidationReport, ValidationError } from "../types";
 
-// Always initialize GoogleGenAI with a named parameter using process.env.API_KEY.
-// Create a new instance right before making an API call to ensure the latest key is used.
 const getAiClient = () => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) throw new Error("API Key is missing.");
@@ -30,50 +28,9 @@ export const blobToBase64 = (blob: Blob): Promise<string> => {
 };
 
 /**
- * AGENT 2: Structural Auditor (Audit validation claims against JSON math)
+ * STEP 1: COMPREHENSIVE ACOUSTIC AUDIT
  */
-const auditValidationErrors = async (
-  jsonSkeleton: string, 
-  rawErrors: ValidationError[],
-  modelId: string
-): Promise<{ verifiedErrors: ValidationError[] }> => {
-  if (rawErrors.length === 0) return { verifiedErrors: [] };
-
-  const prompt = `
-    Verify if these "Acoustic Claims" are mathematically and structurally possible in this "JSON Code".
-    
-    JSON: ${jsonSkeleton.slice(0, 10000)}
-    CLAIMS: ${JSON.stringify(rawErrors)}
-    
-    VERIFICATION LOGIC: 
-    1. Timestamp Overlap: Flag as error ONLY if (start_time of segment N) is EARLIER than (end_time of segment N-1) by more than 0.7 seconds (interference).
-    2. Speaker Misattribution: Confirm if the claim identifies a specific segment ID and if that segment exists.
-    3. Missing Segment: Cross-reference the claim's time range with the JSON's timeline.
-    
-    IMPORTANT: All descriptions must be in English.
-    
-    OUTPUT JSON: { "verifiedErrors": [{ "tag": string, "time": string, "description": string }] }
-  `;
-
-  const ai = getAiClient();
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: prompt,
-    config: { responseMimeType: "application/json", temperature: 0.1 }
-  });
-
-  try {
-    const result = JSON.parse(response.text || "{}");
-    return { verifiedErrors: result.verifiedErrors || [] };
-  } catch {
-    return { verifiedErrors: rawErrors };
-  }
-};
-
-/**
- * STEP 1: VALIDATION (Dual-Agent Triangulation)
- */
-export const validateJsonWithAudio = async (
+export const runAcousticAudit = async (
   base64Audio: string,
   mimeType: string,
   jsonSkeleton: string,
@@ -82,79 +39,75 @@ export const validateJsonWithAudio = async (
   const safeMimeType = normalizeMimeType(mimeType);
   const ai = getAiClient();
 
-  const acousticPrompt = `
-    QA this JSON against the Audio using the following strict Acoustic Definitions:
+  const auditPrompt = `
+    ROLE: High-Precision Audio Auditor (Tunisian Arabic Context).
+    TASK: Audit the provided JSON against the Audio.
+    CHECKLIST: 
+    1. SPEAKER: Count distinct voices and cross-check speaker_id/names.
+    2. TIMING: Check for overlaps or speech starting/ending outside segment bounds.
+    3. CONTENT: Flag transcription errors (Modern Standard Arabic used instead of Derja, or wrong words).
+    4. PUNCTUATION: Flag any punctuation marks (e.g., . , ! ? ، ؛ ؟) in the transcription text. The text MUST be raw words only.
     
-    DEFINITIONS FOR ERRORS:
-    1. [Missing Segment]: Flag ONLY if you hear human speech in a gap where NO segment exists in the JSON. If there is silence in a gap, it is NOT an error.
-    2. [Phantom Segment]: Flag ONLY if a segment exists in the JSON, but there is NO human speech (only silence, noise, or music) during that duration.
-    3. [Speaker Misattribution]: Identify the number of distinct voices. Flag if a segment's Speaker ID does not match the established vocal identity (gender, tone, cadence) for that ID.
-    4. [Timestamp Overlap]: Flag if two segments overlap/interfere by more than 0.7 seconds.
-    5. [Timestamp Misalignment]: Flag if a segment starts "Too Early" (i.e., the timestamp begins significantly before the speaker actually starts talking).
+    JSON TO AUDIT: ${jsonSkeleton.slice(0, 8000)}
     
-    JSON Snippet: ${jsonSkeleton.slice(0, 5000)}
-    OUTPUT JSON: { "errors": [{"tag": string, "time": string, "description": string}], "audioSpeakerCount": number, "segmentCount": number }
+    OUTPUT JSON FORMAT:
+    {
+      "detectedSpeakers": number,
+      "errors": [
+        {
+          "tag": "SPEAKER" | "TIMING" | "CONTENT" | "STRUCTURE",
+          "time": "MM:SS",
+          "description": "Short explanation in English",
+          "severity": "CRITICAL" | "WARNING"
+        }
+      ],
+      "confidenceScore": number
+    }
   `;
 
-  const acousticResponse = await ai.models.generateContent({
+  const response = await ai.models.generateContent({
     model: modelId,
     contents: {
       parts: [
         { inlineData: { mimeType: safeMimeType, data: base64Audio } },
-        { text: acousticPrompt }
+        { text: auditPrompt }
       ]
     },
-    config: { responseMimeType: "application/json", temperature: 0.0 }
+    config: { responseMimeType: "application/json", temperature: 0.1 }
   });
 
-  const acousticResult = JSON.parse(acousticResponse.text || '{"errors":[]}');
-  const { verifiedErrors } = await auditValidationErrors(jsonSkeleton, acousticResult.errors || [], modelId);
-
-  let jsonSpeakerCount = 0;
+  const result = JSON.parse(response.text || '{"errors":[]}');
+  let jsonSpeakers = 0;
   try {
     const data = JSON.parse(jsonSkeleton);
-    const speakers = new Set(data.map((s: any) => s.speaker || s.speaker_id));
-    jsonSpeakerCount = speakers.size;
+    jsonSpeakers = Array.isArray(data) ? new Set(data.map((s: any) => s.speaker || s.speaker_id)).size : 0;
   } catch (e) {}
 
   return {
-    isValid: verifiedErrors.length === 0,
-    errors: verifiedErrors,
-    warnings: [],
+    isValid: (result.errors || []).length === 0,
+    errors: result.errors || [],
     stats: {
-      audioSpeakerCount: acousticResult.audioSpeakerCount || 0,
-      jsonSpeakerCount: jsonSpeakerCount,
-      segmentCount: acousticResult.segmentCount || 0
+      detectedSpeakers: result.detectedSpeakers || 0,
+      jsonSpeakers: jsonSpeakers,
+      confidenceScore: result.confidenceScore || 0
     }
   };
 };
 
 /**
- * STEP 2: GENERATE DRAFT (Phonetic Acoustic Mirror)
+ * STEP 2: VERBATIM TRANSCRIBER
  */
-export const generateDraftTranscription = async (
+export const generateVerbatimScript = async (
   base64Audio: string, 
   mimeType: string,
-  guidelines: string,
   modelId: string,
   onProgress?: (text: string) => void
 ): Promise<string> => {
   const ai = getAiClient();
   const systemPrompt = `
-    ROLE: Acoustic Mirror (Tunisian Derja). 
-    TASK: Transcribe exactly what you hear. Do not correct grammar. Do not enforce Modern Standard Arabic rules.
-    
-    STRICT RULES:
-    1. NO PUNCTUATION: Do not use periods, commas, question marks, or exclamation points.
-    2. SPEAKER TURNS: Whenever the speaker changes or there is a significant pause/turn, start a NEW LINE.
-    3. SPELLING NORMALIZATION:
-       - Always use 'فما', NEVER use 'فمة'.
-       - Always use 'باش', NEVER use 'سوف'.
-       - Always use 'شكون', NEVER use 'من هو'.
-    4. NO HALLUCINATION: If you hear French or English words, write them verbatim.
-    5. VERBATIM: If the speaker stutters or uses "incorrect" dialect forms, keep them exactly as they are.
-    
-    FORMAT: Plain text with line breaks for speaker changes.
+    ROLE: Expert Tunisian Derja Transcriber. 
+    STRICT RULES: Use 'فما', 'باش', 'شكون'. NO PUNCTUATION. 
+    Start a NEW LINE for every speaker change. Verbatim only.
   `;
 
   const responseStream = await ai.models.generateContentStream({
@@ -169,58 +122,56 @@ export const generateDraftTranscription = async (
 
   let fullTranscript = "";
   for await (const chunk of responseStream) {
-    const chunkText = chunk.text;
-    if (chunkText) {
-      const cleanChunk = chunkText.replace(/[،.؟!"';:]/g, '');
-      fullTranscript += cleanChunk;
+    if (chunk.text) {
+      const clean = chunk.text.replace(/[،.؟!"';:]/g, '');
+      fullTranscript += clean;
       if (onProgress) onProgress(fullTranscript);
     }
   }
-  
-  return fullTranscript.replace(/\[\d+:\d+\]/g, '').replace(/\d{2}:\d{2}/g, '').trim();
+  return fullTranscript.trim();
 };
 
 /**
- * STEP 3: FORCED LINEAR ALIGNMENT (Structural Integrity + Line-Break Anchoring)
+ * STEP 3: UNIFIED FIXER
+ * Applies fixes only to specific errors provided, using audio and corrected script.
  */
-export const alignJsonToAudioAndText = async (
+export const applyUnifiedFixes = async (
   base64Audio: string, 
   mimeType: string, 
-  referenceText: string,
-  jsonSkeleton: string,
+  currentJson: string, 
+  errorsToFix: ValidationError[], 
+  correctedScript: string | undefined,
   modelId: string
-): Promise<string> => {
-  const aiClient = getAiClient();
+) => {
+  const ai = getAiClient();
   const prompt = `
-    ROLE: Linear Forced Aligner (Structural Integrity Specialist).
+    ROLE: Tunisian JSON Refinement Specialist.
     
-    REFERENCE TEXT:
-    "${referenceText}"
-
-    JSON CONTAINER (MUST PRESERVE EXACT STRUCTURE):
-    ${jsonSkeleton}
-
+    CONTEXT:
+    1. CURRENT JSON: ${currentJson}
+    2. ERRORS TO TARGET: ${JSON.stringify(errorsToFix)}
+    3. MASTER SCRIPT (Use this for content corrections): "${correctedScript || 'N/A'}"
+    
     TASK:
-    1. Map the REFERENCE TEXT into the "transcription" fields of the JSON CONTAINER.
-    2. **STRUCTURAL LOCKDOWN**: DO NOT modify the JSON structure. Do not add brackets, do not remove keys, do not change order. Return ONLY the valid JSON object.
-    3. **LINE-BREAK ANCHORING**: Treat every NEW LINE in the Reference Text as a hard signal for a new speaker segment. Use this to prevent words from one speaker "bleeding" into the segment of the next speaker.
-    4. **LINEAR CONSUMPTION**: Treat words as a one-way queue. Once a word is assigned, it is consumed and cannot be repeated in the next segment.
-    5. **NO PUNCTUATION**: Ensure all transcription fields in the JSON remain raw and without punctuation.
-    6. **VERBATIM TUNISIAN**: Keep all Tunisian dialect words (e.g. فما) exactly as provided in the Reference Text.
-
-    OUTPUT: Return ONLY the valid JSON.
+    - Update the CURRENT JSON to resolve ONLY the "ERRORS TO TARGET".
+    - If an error is 'CONTENT' or 'PUNCTUATION', use the MASTER SCRIPT to find the correct words for that timestamp.
+    - If an error is 'SPEAKER' or 'TIMING', re-align based on the audio waveform.
+    - If MASTER SCRIPT is provided, ensure the final transcription in the JSON matches its wording for corrected segments.
+    - STRICT RULE: The final transcription text in the JSON MUST be COMPLETELY free of punctuation (no periods, commas, question marks, etc.).
+    - Maintain the original JSON structure.
+    - Return ONLY the valid corrected JSON.
   `;
-
-  const response = await aiClient.models.generateContent({
+  
+  const response = await ai.models.generateContent({
     model: modelId,
-    contents: {
+    contents: { 
       parts: [
-        { inlineData: { mimeType: normalizeMimeType(mimeType), data: base64Audio } },
+        { inlineData: { mimeType: normalizeMimeType(mimeType), data: base64Audio } }, 
         { text: prompt }
-      ]
+      ] 
     },
     config: { responseMimeType: "application/json", temperature: 0.0 }
   });
-
-  return response.text || jsonSkeleton;
+  
+  return response.text || currentJson;
 };
