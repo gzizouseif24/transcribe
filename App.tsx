@@ -136,6 +136,22 @@ const handleSheetImport = (rows: ImportedRow[]) => {
     }));
   };
 
+  const handleAddCustomError = (id: string, error: ValidationError) => {
+    setItems(prev => prev.map(item => {
+      if (item.id === id && item.validationReport) {
+        return {
+          ...item,
+          validationReport: {
+            ...item.validationReport,
+            errors: [...item.validationReport.errors, error],
+            isValid: false
+          }
+        };
+      }
+      return item;
+    }));
+  };
+
   const handleApplyFixes = async (id: string, activeErrors: ValidationError[]) => {
     const item = items.find(i => i.id === id);
     if (!item) return;
@@ -238,6 +254,7 @@ const handleSheetImport = (rows: ImportedRow[]) => {
               onRetry={id => setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.IDLE, validationReport: undefined, error: undefined } : i))}
               onApplyFixes={handleApplyFixes}
               onDismissError={handleDismissError}
+              onAddCustomError={handleAddCustomError}
             />
           ))}
         </section>

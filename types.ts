@@ -13,7 +13,7 @@ export enum ProcessingStatus {
 }
 
 export interface ValidationError {
-  tag: 'SPEAKER' | 'TIMING' | 'CONTENT' | 'STRUCTURE' | 'PUNCTUATION';
+  tag: 'SPEAKER' | 'TIMING' | 'CONTENT' | 'STRUCTURE' | 'PUNCTUATION' | 'CUSTOM';
   time: string;      
   description: string; 
   severity: 'CRITICAL' | 'WARNING';
@@ -22,6 +22,7 @@ export interface ValidationError {
 export interface ValidationReport {
   isValid: boolean;
   errors: ValidationError[];
+  requiresManualReview?: boolean;
   stats: {
     detectedSpeakers: number;
     jsonSpeakers: number;

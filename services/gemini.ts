@@ -43,7 +43,7 @@ export const runAcousticAudit = async (
     ROLE: High-Precision Audio Auditor (Tunisian Arabic Context).
     TASK: Audit the provided JSON against the Audio.
     CHECKLIST: 
-    1. SPEAKER: Count distinct voices and cross-check speaker_id/names.
+    1. SPEAKER: Pay extremely close attention to speaker misattributions. Track voice characteristics and turn-taking carefully. Flag any segment where the speaker ID does not match the voice. This is very common.
     2. TIMING: Check for overlaps or speech starting/ending outside segment bounds.
     3. CONTENT: Flag transcription errors (Modern Standard Arabic used instead of Derja, or wrong words).
     4. PUNCTUATION: Flag any punctuation marks (e.g., . , ! ? ، ؛ ؟) in the transcription text. The text MUST be raw words only.
@@ -53,6 +53,7 @@ export const runAcousticAudit = async (
     OUTPUT JSON FORMAT:
     {
       "detectedSpeakers": number,
+      "requiresManualReview": boolean,
       "errors": [
         {
           "tag": "SPEAKER" | "TIMING" | "CONTENT" | "STRUCTURE",
@@ -88,6 +89,7 @@ export const runAcousticAudit = async (
   return {
     isValid: (result.errors || []).length === 0,
     errors: result.errors || [],
+    requiresManualReview: result.requiresManualReview || false,
     stats: {
       detectedSpeakers: result.detectedSpeakers || 0,
       jsonSpeakers: jsonSpeakers,
@@ -159,6 +161,10 @@ export const applyUnifiedFixes = async (
     - If an error is 'CONTENT' or 'PUNCTUATION', use the MASTER SCRIPT to find the correct words for that timestamp.
     - If an error is 'SPEAKER' or 'TIMING', re-align based on the audio waveform.
     - If MASTER SCRIPT is provided, ensure the final transcription in the JSON matches its wording for corrected segments.
+    - Delete phantom segments or segments that contain ONLY laughter or noise.
+    - If there is French speech, replace it entirely with the tag "[french]". NEVER transcribe French words using Latin or Arabic letters.
+    - NEVER transcribe numbers as digits (e.g., 1, 2, 3). Always spell them out in Tunisian Arabic (Darija) (e.g., واحد, ثنين, تلاثة).
+    - Enforce specific Tunisian Darija spellings: ALWAYS replace "برشة" with "برشا".
     - STRICT RULE: The final transcription text in the JSON MUST be COMPLETELY free of punctuation (no periods, commas, question marks, etc.).
     - Maintain the original JSON structure.
     - Return ONLY the valid corrected JSON.

@@ -13,18 +13,20 @@ interface TranscriptionItemCardProps {
   onRetry: (id: string) => void;
   onApplyFixes: (id: string, activeErrors: ValidationError[]) => void;
   onDismissError: (id: string, index: number) => void;
+  onAddCustomError: (id: string, error: ValidationError) => void;
 }
 
 export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({ 
   item, onRemove, onUpdateJsonInput, onAudit, onTranscribe,
   onUpdateDraftText, onModelChange, onRetry,
-  onApplyFixes, onDismissError
+  onApplyFixes, onDismissError, onAddCustomError
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isCopied, setIsCopied] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState('');
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
@@ -68,6 +70,7 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
       case 'TIMING': return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300';
       case 'CONTENT': return 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300';
       case 'PUNCTUATION': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300';
+      case 'CUSTOM': return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300';
       default: return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
     }
   };
@@ -96,6 +99,16 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
       <audio ref={audioRef} src={item.previewUrl} onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)} onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)} className="hidden" />
 
       <div className="p-4 space-y-6">
+        {item.validationReport?.requiresManualReview && (
+          <div className="px-4 py-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl flex items-start gap-3 animate-pulse">
+            <i className="fa-solid fa-triangle-exclamation text-amber-500 mt-0.5"></i>
+            <div className="flex-1">
+              <p className="text-[10px] text-amber-700 dark:text-amber-400 font-black uppercase tracking-wider">Complex Audio: Manual Review Highly Recommended</p>
+              <p className="text-[9px] text-amber-600 dark:text-amber-500 mt-0.5">This audio has many errors or complex speaker turns. Please review the final JSON carefully.</p>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center gap-4 bg-slate-100 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-200 dark:border-slate-700">
           <button onClick={togglePlay} className="w-12 h-12 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-lg hover:scale-105 transition-all">
              <i className={`fa-solid ${isPlaying ? 'fa-pause' : 'fa-play'} text-sm`}></i>
@@ -163,6 +176,33 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
                          </button>
                       </div>
                    ))}
+                   
+                   <div className="mt-3 flex gap-2">
+                     <input 
+                       type="text" 
+                       value={customPrompt}
+                       onChange={(e) => setCustomPrompt(e.target.value)}
+                       placeholder="Add custom instruction (e.g., 'Fix speaker 2 at 01:15')"
+                       className="flex-1 px-3 py-2 text-[9px] rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-1 focus:ring-indigo-500 outline-none transition-all"
+                     />
+                     <button 
+                       onClick={() => {
+                         if (customPrompt.trim()) {
+                           onAddCustomError(item.id, {
+                             tag: 'CUSTOM',
+                             time: 'Global',
+                             description: customPrompt.trim(),
+                             severity: 'WARNING'
+                           });
+                           setCustomPrompt('');
+                         }
+                       }}
+                       disabled={!customPrompt.trim()}
+                       className="px-3 py-2 bg-slate-800 text-white rounded-lg text-[9px] font-black uppercase hover:bg-slate-700 transition-all disabled:opacity-50"
+                     >
+                       Add
+                     </button>
+                   </div>
                 </div>
               )}
 
