@@ -1,7 +1,7 @@
-
 import React, { useState, useEffect } from 'react';
 import { FileUploader } from './components/FileUploader';
 import { TranscriptionItemCard } from './components/TranscriptionItemCard';
+import { SheetImporter } from './components/SheetImporter';
 import { TranscriptionItem, ProcessingStatus, ValidationError } from './types';
 import { 
   blobToBase64, 
@@ -46,6 +46,34 @@ const App: React.FC = () => {
       setHasApiKey(false);
       if (window.aistudio) window.aistudio.openSelectKey();
     }
+  };
+
+
+  // SHEET IMPORT HANDLER
+const handleSheetImport = (rows: { audioUrl: string; file: Blob; mimeType: string; json: string; fileName: string; audioError?: string }[]) => {
+  
+  // TEMP DEBUG
+  console.log('Imported rows:', rows.map(r => ({
+    fileName: r.fileName,
+    hasAudio: r.audioUrl !== '',
+    fileSize: r.file.size,
+    mimeType: r.mimeType,
+    audioError: r.audioError
+  })));
+
+  const newItems: TranscriptionItem[] = rows.map(row => ({
+      id: generateId(),
+      file: row.file,
+      fileName: row.fileName,
+      mimeType: row.mimeType || 'audio/wav',
+      previewUrl: row.audioUrl || '',
+      status: row.audioError ? ProcessingStatus.ERROR : ProcessingStatus.IDLE,
+      inputJson: row.json,
+      addedAt: Date.now(),
+      model: 'gemini-3-flash-preview',
+      error: row.audioError
+    }));
+    setItems(prev => [...newItems, ...prev]);
   };
 
   const handleAudit = async (id: string) => {
@@ -178,8 +206,12 @@ const App: React.FC = () => {
         </button>
       </header>
 
-      <main className="max-w-5xl mx-auto p-8 space-y-10">
+      <main className="max-w-5xl mx-auto p-8 space-y-6">
+        {/* Sheet Auto-Import — sits above the file uploader */}
+        <SheetImporter onImport={handleSheetImport} isLoading={false} />
+
         <FileUploader onFilesSelected={handleFilesSelected} onUrlsSelected={handleUrlsSelected} />
+
         <section className="space-y-8 pb-20">
           {items.map(item => (
             <TranscriptionItemCard 
