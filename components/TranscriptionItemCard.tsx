@@ -11,6 +11,7 @@ interface TranscriptionItemCardProps {
   onUpdateJsonOutput: (id: string, json: string) => void;
   onModelChange: (id: string, model: string) => void;
   onRetry: (id: string) => void;
+  onResetState?: (id: string) => void;
   onApplyFixes: (id: string, activeErrors: ValidationError[]) => void;
   onDismissError: (id: string, index: number) => void;
   onAddCustomError: (id: string, error: ValidationError) => void;
@@ -20,7 +21,7 @@ interface TranscriptionItemCardProps {
 
 export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({ 
   item, onRemove, onUpdateJsonInput, onAudit, onTranscribe,
-  onUpdateDraftText, onUpdateJsonOutput, onModelChange, onRetry,
+  onUpdateDraftText, onUpdateJsonOutput, onModelChange, onRetry, onResetState,
   onApplyFixes, onDismissError, onAddCustomError,
   onPushToSheet, canPush
 }) => {
@@ -111,6 +112,16 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
               <option value="gemini-3-flash-preview">Flash</option>
               <option value="gemini-3-pro-preview">Pro</option>
           </select>
+          {isBusy && onResetState && (
+            <button 
+              onClick={() => onResetState(item.id)}
+              className="text-slate-400 hover:text-amber-500 transition-colors p-1 flex items-center gap-1 bg-slate-800/50 rounded px-2 border border-slate-700"
+              title="Force Reset Status"
+            >
+              <i className="fa-solid fa-rotate-right text-[10px]"></i>
+              <span className="text-[9px] font-black uppercase">Reset</span>
+            </button>
+          )}
           <button onClick={() => onRemove(item.id)} className="text-slate-400 hover:text-rose-500 transition-all"><i className="fa-solid fa-times"></i></button>
         </div>
       </div>
@@ -165,7 +176,7 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
                   onChange={(e) => onUpdateJsonInput(item.id, e.target.value)}
                   disabled={isBusy}
                   placeholder="Paste JSON segments here..."
-                  className="w-full h-56 p-4 text-[10px] font-mono rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 focus:ring-2 focus:ring-indigo-500 outline-none resize-none transition-all shadow-inner"
+                  className="w-full h-56 p-4 text-[10px] font-mono rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 focus:ring-2 focus:ring-indigo-500 outline-none resize-y transition-all shadow-inner"
                 />
                 {isBusy && (item.status === ProcessingStatus.AUDITING || item.status === ProcessingStatus.REPAIRING_JSON) && (
                   <div className="absolute inset-0 bg-white/60 dark:bg-slate-950/60 backdrop-blur-[2px] rounded-2xl flex items-center justify-center z-10">
@@ -259,7 +270,7 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
                      onChange={(e) => onUpdateDraftText(item.id, e.target.value)}
                      disabled={isBusy && item.status !== ProcessingStatus.TRANSCRIBING}
                      placeholder="Review or manually edit the script here..."
-                     className="w-full h-56 p-5 text-[14px] arabic-text leading-[2] rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 focus:ring-2 focus:ring-emerald-500 outline-none resize-none transition-all shadow-inner scrollbar-hide"
+                     className="w-full h-56 p-5 text-[14px] arabic-text leading-[2] rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 focus:ring-2 focus:ring-emerald-500 outline-none resize-y transition-all shadow-inner scrollbar-hide"
                   />
                   {item.status === ProcessingStatus.TRANSCRIBING && (
                     <div className="absolute inset-0 bg-emerald-500/5 dark:bg-emerald-500/10 backdrop-blur-[1px] flex items-center justify-center rounded-2xl z-10">
@@ -276,10 +287,10 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
                  </div>
                  <button 
                    onClick={() => onApplyFixes(item.id, activeErrors)} 
-                   disabled={isBusy || activeErrors.length === 0}
+                   disabled={isBusy || (activeErrors.length === 0 && !item.finalTranscription?.trim())}
                    className="w-full py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-[10px] font-black uppercase hover:border-indigo-500 hover:text-indigo-600 transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow-sm"
                  >
-                   <i className="fa-solid fa-screwdriver-wrench mr-2"></i> Apply Remaining Fixes
+                   <i className="fa-solid fa-screwdriver-wrench mr-2"></i> {activeErrors.length === 0 ? 'Inject Master Script' : 'Apply Fixes & Inject Script'}
                  </button>
               </div>
 

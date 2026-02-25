@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import localforage from 'localforage';
 import { FileUploader } from './components/FileUploader';
 import { TranscriptionItemCard } from './components/TranscriptionItemCard';
 import { SheetImporter, ImportedRow } from './components/SheetImporter';
@@ -21,11 +22,63 @@ declare global {
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
+localforage.config({
+  name: 'DerjaScan',
+  storeName: 'transcription_items'
+});
+
 const App: React.FC = () => {
   const [items, setItems] = useState<TranscriptionItem[]>([]);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [darkMode, setDarkMode] = useState(true);
   const [scriptUrl, setScriptUrl] = useState(''); // shared between importer + push
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const savedItems = await localforage.getItem<TranscriptionItem[]>('items');
+        if (savedItems && Array.isArray(savedItems)) {
+          const restoredItems = savedItems.map(item => {
+            if (item.file) {
+              item.previewUrl = URL.createObjectURL(item.file);
+            }
+            return item;
+          });
+          setItems(restoredItems);
+        }
+        
+        const savedScriptUrl = await localforage.getItem<string>('scriptUrl');
+        if (savedScriptUrl) setScriptUrl(savedScriptUrl);
+
+        const savedDarkMode = await localforage.getItem<boolean>('darkMode');
+        if (savedDarkMode !== null) setDarkMode(savedDarkMode);
+      } catch (err) {
+        console.error('Failed to load data from localforage:', err);
+      } finally {
+        setIsLoaded(true);
+      }
+    };
+    loadData();
+  }, []);
+
+  useEffect(() => {
+    if (isLoaded) {
+      localforage.setItem('items', items).catch(err => console.error('Failed to save items:', err));
+    }
+  }, [items, isLoaded]);
+
+  useEffect(() => {
+    if (isLoaded) {
+      localforage.setItem('scriptUrl', scriptUrl).catch(err => console.error('Failed to save scriptUrl:', err));
+    }
+  }, [scriptUrl, isLoaded]);
+
+  useEffect(() => {
+    if (isLoaded) {
+      localforage.setItem('darkMode', darkMode).catch(err => console.error('Failed to save darkMode:', err));
+    }
+  }, [darkMode, isLoaded]);
 
   useEffect(() => {
     const checkKey = async () => {
@@ -229,6 +282,15 @@ const handlePushToSheet = async (id: string, accepted: 'Yes' | 'No'): Promise<'s
     }
   };
 
+  if (!isLoaded) return (
+    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
+      <div className="flex flex-col items-center gap-4">
+        <i className="fa-solid fa-spinner fa-spin text-indigo-500 text-3xl"></i>
+        <p className="text-slate-400 text-sm font-black uppercase tracking-widest">Loading Workspace...</p>
+      </div>
+    </div>
+  );
+
   if (!hasApiKey) return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
       <div className="max-w-md text-center mb-8">
@@ -274,6 +336,7 @@ const handlePushToSheet = async (id: string, accepted: 'Yes' | 'No'): Promise<'s
               onUpdateJsonOutput={(id, json) => setItems(prev => prev.map(i => i.id === id ? { ...i, jsonOutput: json } : i))}
               onModelChange={(id, m) => setItems(prev => prev.map(i => i.id === id ? { ...i, model: m } : i))}
               onRetry={id => setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.IDLE, validationReport: undefined, error: undefined } : i))}
+              onResetState={id => setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.READY_TO_FIX, error: undefined } : i))}
               onApplyFixes={handleApplyFixes}
               onDismissError={handleDismissError}
               onAddCustomError={handleAddCustomError}

@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import { ValidationReport, ValidationError } from "../types";
 
 const getAiClient = () => {
@@ -41,12 +41,11 @@ export const runAcousticAudit = async (
 
   const auditPrompt = `
     ROLE: High-Precision Audio Auditor (Tunisian Arabic Context).
-    TASK: Audit the provided JSON against the Audio.
+    TASK: Audit the provided JSON against the Audio. IGNORE all transcription content, spelling, and punctuation. Focus STRICTLY on structural and acoustic errors.
     CHECKLIST: 
-    1. SPEAKER: Pay extremely close attention to speaker misattributions. Track voice characteristics and turn-taking carefully. Flag any segment where the speaker ID does not match the voice. This is very common.
+    1. SPEAKER: Pay extremely close attention to speaker misattributions. Track voice characteristics and turn-taking carefully. Flag any segment where the speaker ID does not match the voice. Flag speaker count mismatches (e.g. audio has 3 people, JSON has 2).
     2. TIMING: Check for overlaps or speech starting/ending outside segment bounds.
-    3. CONTENT: Flag transcription errors (Modern Standard Arabic used instead of Derja, or wrong words).
-    4. PUNCTUATION: Flag any punctuation marks (e.g., . , ! ? ، ؛ ؟) in the transcription text. The text MUST be raw words only.
+    3. STRUCTURE: Flag phantom segments (segments that contain ONLY silence, background noise, or music with no human speech).
     
     JSON TO AUDIT: ${jsonSkeleton.slice(0, 8000)}
     
@@ -56,7 +55,7 @@ export const runAcousticAudit = async (
       "requiresManualReview": boolean,
       "errors": [
         {
-          "tag": "SPEAKER" | "TIMING" | "CONTENT" | "STRUCTURE",
+          "tag": "SPEAKER" | "TIMING" | "STRUCTURE",
           "time": "MM:SS",
           "description": "Short explanation in English",
           "severity": "CRITICAL" | "WARNING"
@@ -74,7 +73,11 @@ export const runAcousticAudit = async (
         { text: auditPrompt }
       ]
     },
-    config: { responseMimeType: "application/json", temperature: 0.1 }
+    config: { 
+      responseMimeType: "application/json", 
+      temperature: 0.1,
+      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
+    }
   });
 
   const text = response.text || '{"errors":[]}';
@@ -121,6 +124,9 @@ export const generateVerbatimScript = async (
         { inlineData: { mimeType: normalizeMimeType(mimeType), data: base64Audio } },
         { text: systemPrompt }
       ]
+    },
+    config: {
+      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
     }
   });
 
@@ -148,20 +154,21 @@ export const applyUnifiedFixes = async (
   modelId: string
 ) => {
   const ai = getAiClient();
+  const hasStructuralErrors = errorsToFix.length > 0;
+
   const prompt = `
     ROLE: Tunisian JSON Refinement Specialist.
     
     CONTEXT:
     1. CURRENT JSON: ${currentJson}
-    2. ERRORS TO TARGET: ${JSON.stringify(errorsToFix)}
+    ${hasStructuralErrors ? `2. ERRORS TO TARGET: ${JSON.stringify(errorsToFix)}` : ''}
     3. MASTER SCRIPT (Use this for content corrections): "${correctedScript || 'N/A'}"
     
     TASK:
-    - Update the CURRENT JSON to resolve ONLY the "ERRORS TO TARGET".
-    - If an error is 'CONTENT' or 'PUNCTUATION', use the MASTER SCRIPT to find the correct words for that timestamp.
-    - If an error is 'SPEAKER' or 'TIMING', re-align based on the audio waveform.
-    - If MASTER SCRIPT is provided, ensure the final transcription in the JSON matches its wording for corrected segments.
-    - Delete phantom segments or segments that contain ONLY laughter or noise.
+    1. TEXT REPLACEMENT: You MUST update the transcription text in the CURRENT JSON to perfectly match the wording in the MASTER SCRIPT. Align the sentences from the MASTER SCRIPT to the correct segments based on the sequence of speakers and the original text.
+    ${hasStructuralErrors ? `2. STRUCTURAL FIXES: Resolve the specific issues listed in "ERRORS TO TARGET" (e.g., fix timings, correct speaker IDs, delete phantom segments).
+    - If an error is 'SPEAKER' or 'TIMING', re-align based on logical deduction from the text and existing timestamps.
+    - Delete phantom segments or segments that contain ONLY laughter or noise.` : ''}
     - If there is French speech, replace it entirely with the tag "[french]". NEVER transcribe French words using Latin or Arabic letters.
     - NEVER transcribe numbers as digits (e.g., 1, 2, 3). Always spell them out in Tunisian Arabic (Darija) (e.g., واحد, ثنين, تلاثة).
     - Enforce specific Tunisian Darija spellings: ALWAYS replace "برشة" with "برشا".
@@ -170,15 +177,16 @@ export const applyUnifiedFixes = async (
     - Return ONLY the valid corrected JSON.
   `;
   
+  const parts: any[] = [{ text: prompt }];
+
   const response = await ai.models.generateContent({
     model: modelId,
-    contents: { 
-      parts: [
-        { inlineData: { mimeType: normalizeMimeType(mimeType), data: base64Audio } }, 
-        { text: prompt }
-      ] 
-    },
-    config: { responseMimeType: "application/json", temperature: 0.0 }
+    contents: { parts },
+    config: { 
+      responseMimeType: "application/json", 
+      temperature: 0.0,
+      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
+    }
   });
   
   return response.text || currentJson;
