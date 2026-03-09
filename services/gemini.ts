@@ -27,6 +27,23 @@ export const blobToBase64 = (blob: Blob): Promise<string> => {
   });
 };
 
+const minifyJsonForAudit = (jsonStr: string): string => {
+  try {
+    const data = JSON.parse(jsonStr);
+    if (!Array.isArray(data)) return jsonStr;
+    // Keep only essential fields for acoustic auditing
+    return JSON.stringify(data.map((s: any) => ({
+      id: s.id || s.segment_id,
+      start: s.start,
+      end: s.end,
+      speaker: s.speaker || s.speaker_id,
+      text: (s.text || '').substring(0, 30) // Keep just enough text for context
+    })));
+  } catch (e) {
+    return jsonStr;
+  }
+};
+
 /**
  * STEP 1: COMPREHENSIVE ACOUSTIC AUDIT
  */
@@ -38,16 +55,27 @@ export const runAcousticAudit = async (
 ): Promise<ValidationReport> => {
   const safeMimeType = normalizeMimeType(mimeType);
   const ai = getAiClient();
+  const minifiedJson = minifyJsonForAudit(jsonSkeleton);
 
   const auditPrompt = `
     ROLE: High-Precision Audio Auditor (Tunisian Arabic Context).
-    TASK: Audit the provided JSON against the Audio. IGNORE all transcription content, spelling, and punctuation. Focus STRICTLY on structural and acoustic errors.
-    CHECKLIST: 
-    1. SPEAKER: Pay extremely close attention to speaker misattributions. Track voice characteristics and turn-taking carefully. Flag any segment where the speaker ID does not match the voice. Flag speaker count mismatches (e.g. audio has 3 people, JSON has 2).
-    2. TIMING: Check for overlaps or speech starting/ending outside segment bounds.
-    3. STRUCTURE: Flag phantom segments (segments that contain ONLY silence, background noise, or music with no human speech).
+    TASK: Audit the provided JSON against the Audio. Focus STRICTLY on structural and acoustic errors.
     
-    JSON TO AUDIT: ${jsonSkeleton.slice(0, 8000)}
+    DIARIZATION PROTOCOL:
+    1. First, listen to the entire audio and identify the unique "Voice Profiles" (e.g., Voice 1: Adult Male, Voice 2: Young Female).
+    2. Then, scan the JSON segments and verify if the assigned "speaker" ID consistently matches the same Voice Profile.
+    3. Flag a SPEAKER error if:
+       - The voice changes but the speaker ID remains the same.
+       - The speaker ID changes but the voice is clearly the same person.
+       - A segment is attributed to the wrong speaker ID.
+       - There are more or fewer distinct voices in the audio than speaker IDs in the JSON.
+    
+    TIMING & STRUCTURE PROTOCOL:
+    1. Flag TIMING errors for significant overlaps or if speech is cut off.
+    2. Flag STRUCTURE errors for "Phantom Segments" (segments with no human speech, only noise/silence).
+
+    JSON TO AUDIT (Minified): 
+    ${minifiedJson}
     
     OUTPUT JSON FORMAT:
     {
@@ -57,7 +85,7 @@ export const runAcousticAudit = async (
         {
           "tag": "SPEAKER" | "TIMING" | "STRUCTURE",
           "time": "MM:SS",
-          "description": "Short explanation in English",
+          "description": "Detailed explanation of the mismatch (e.g., 'Segment at 01:20 is a female voice but labeled as speaker_1 which was previously established as a male voice')",
           "severity": "CRITICAL" | "WARNING"
         }
       ],
@@ -75,8 +103,7 @@ export const runAcousticAudit = async (
     },
     config: { 
       responseMimeType: "application/json", 
-      temperature: 0.1,
-      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
+      temperature: 0.1
     }
   });
 
@@ -173,8 +200,9 @@ export const applyUnifiedFixes = async (
     - NEVER transcribe numbers as digits (e.g., 1, 2, 3). Always spell them out in Tunisian Arabic (Darija) (e.g., واحد, ثنين, تلاثة).
     - Enforce specific Tunisian Darija spellings: ALWAYS replace "برشة" with "برشا".
     - STRICT RULE: The final transcription text in the JSON MUST be COMPLETELY free of punctuation (no periods, commas, question marks, etc.).
-    - Maintain the original JSON structure.
-    - Return ONLY the valid corrected JSON.
+    - Maintain the EXACT original JSON structure, indentation, and formatting (pretty print).
+    - DO NOT wrap the output in any extra [ ] brackets. If the CURRENT JSON does not start and end with [ ], DO NOT add them.
+    - Return ONLY the raw corrected JSON text. DO NOT include markdown formatting like \`\`\`json.
   `;
   
   const parts: any[] = [{ text: prompt }];
@@ -183,11 +211,12 @@ export const applyUnifiedFixes = async (
     model: modelId,
     contents: { parts },
     config: { 
-      responseMimeType: "application/json", 
       temperature: 0.0,
       thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
     }
   });
   
-  return response.text || currentJson;
+  let finalJson = response.text || currentJson;
+  finalJson = finalJson.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  return finalJson;
 };
