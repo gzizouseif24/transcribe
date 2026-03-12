@@ -8,7 +8,9 @@ import {
   blobToBase64, 
   runAcousticAudit, 
   generateVerbatimScript, 
-  applyUnifiedFixes
+  applyUnifiedFixes,
+  validateRepairedJson,
+  refineJson
 } from './services/gemini';
 
 declare global {
@@ -31,7 +33,7 @@ const App: React.FC = () => {
   const [items, setItems] = useState<TranscriptionItem[]>([]);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [darkMode, setDarkMode] = useState(true);
-  const [scriptUrl, setScriptUrl] = useState(''); // shared between importer + push
+  const [scriptUrl, setScriptUrl] = useState('');
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
@@ -102,7 +104,6 @@ const App: React.FC = () => {
     }
   };
 
-  // ─── SHEET IMPORT ────────────────────────────────────────────────────────────
   const handleSheetImport = (rows: ImportedRow[]) => {
     const newItems: TranscriptionItem[] = rows.map(row => ({
       id: generateId(),
@@ -116,38 +117,36 @@ const App: React.FC = () => {
       addedAt: Date.now(),
       model: 'gemini-3-flash-preview',
       error: row.audioError,
-      rowNumber: row.rowNumber, // carry row index for push-back
+      rowNumber: row.rowNumber,
     }));
     setItems(prev => [...newItems, ...prev]);
   };
 
-  // ─── PUSH TO SHEET ────────────────────────────────────────────────────────────
-const handlePushToSheet = async (id: string, accepted: 'Yes' | 'No'): Promise<'success' | 'error'> => {
-  const item = items.find(i => i.id === id);
-  if (!item || !item.rowNumber || !scriptUrl) return 'error';
+  const handlePushToSheet = async (id: string, accepted: 'Yes' | 'No'): Promise<'success' | 'error'> => {
+    const item = items.find(i => i.id === id);
+    if (!item || !item.rowNumber || !scriptUrl) return 'error';
 
-  const correctedJson = item.jsonOutput || item.inputJson;
+    const correctedJson = item.jsonOutput || item.inputJson;
 
-  try {
-    await fetch(scriptUrl, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({
-        action: 'push',
-        rowNumber: item.rowNumber,
-        jsonContent: correctedJson,
-        reviewed: true,
-        accepted: accepted,
-      })
-    });
-    return 'success';
-  } catch (e: any) {
-    console.error('Push failed:', e.message);
-    return 'error';
-  }
-};
-  // ─────────────────────────────────────────────────────────────────────────────
+    try {
+      await fetch(scriptUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({
+          action: 'push',
+          rowNumber: item.rowNumber,
+          jsonContent: correctedJson,
+          reviewed: true,
+          accepted: accepted,
+        })
+      });
+      return 'success';
+    } catch (e: any) {
+      console.error('Push failed:', e.message);
+      return 'error';
+    }
+  };
 
   const getBase64ForGemini = async (item: TranscriptionItem) => {
     let b64 = item.audioBase64;
@@ -226,6 +225,8 @@ const handlePushToSheet = async (id: string, accepted: 'Yes' | 'No'): Promise<'s
   const handleApplyFixes = async (id: string, activeErrors: ValidationError[]) => {
     const item = items.find(i => i.id === id);
     if (!item) return;
+    
+    // Phase 1: Repair
     setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.REPAIRING_JSON } : i));
     try {
       const base64Audio = await getBase64ForGemini(item);
@@ -237,8 +238,90 @@ const handlePushToSheet = async (id: string, accepted: 'Yes' | 'No'): Promise<'s
         item.finalTranscription, 
         item.model
       );
-      setItems(prev => prev.map(i => i.id === id ? { ...i, jsonOutput: repaired, status: ProcessingStatus.COMPLETED } : i));
-    } catch (e: any) { handleApiError(e); }
+
+      // Phase 2: Validation Agent
+      setItems(prev => prev.map(i => i.id === id ? { 
+        ...i, 
+        status: ProcessingStatus.VALIDATING,
+        jsonOutput: repaired 
+      } : i));
+
+      const validation = await validateRepairedJson(
+        base64Audio,
+        item.mimeType,
+        item.inputJson,
+        repaired,
+        item.model
+      );
+
+      if (validation.isClean) {
+        setItems(prev => prev.map(i => i.id === id ? { 
+          ...i, 
+          jsonOutput: repaired, 
+          status: ProcessingStatus.COMPLETED,
+          postRepairValidation: validation
+        } : i));
+      } else {
+        setItems(prev => prev.map(i => i.id === id ? { 
+          ...i, 
+          jsonOutput: repaired, 
+          status: ProcessingStatus.COMPLETED_WITH_WARNINGS,
+          postRepairValidation: validation
+        } : i));
+      }
+    } catch (e: any) { 
+      handleApiError(e);
+      setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.ERROR, error: e.message } : i));
+    }
+  };
+
+  const handleRefineFix = async (id: string) => {
+    const item = items.find(i => i.id === id);
+    if (!item || !item.postRepairValidation || !item.jsonOutput) return;
+
+    setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.REPAIRING_JSON } : i));
+    try {
+      const refined = await refineJson(
+        item.jsonOutput,
+        item.postRepairValidation.issues,
+        item.model
+      );
+
+      // Re-validate after refinement
+      setItems(prev => prev.map(i => i.id === id ? { 
+        ...i, 
+        status: ProcessingStatus.VALIDATING,
+        jsonOutput: refined 
+      } : i));
+
+      const base64Audio = await getBase64ForGemini(item);
+      const validation = await validateRepairedJson(
+        base64Audio,
+        item.mimeType,
+        item.inputJson,
+        refined,
+        item.model
+      );
+
+      if (validation.isClean) {
+        setItems(prev => prev.map(i => i.id === id ? { 
+          ...i, 
+          jsonOutput: refined, 
+          status: ProcessingStatus.COMPLETED,
+          postRepairValidation: validation
+        } : i));
+      } else {
+        setItems(prev => prev.map(i => i.id === id ? { 
+          ...i, 
+          jsonOutput: refined, 
+          status: ProcessingStatus.COMPLETED_WITH_WARNINGS,
+          postRepairValidation: validation
+        } : i));
+      }
+    } catch (e: any) {
+      handleApiError(e);
+      setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.ERROR, error: e.message } : i));
+    }
   };
 
   const handleFilesSelected = async (files: File[]) => {
@@ -329,15 +412,16 @@ const handlePushToSheet = async (id: string, accepted: 'Yes' | 'No'): Promise<'s
             <TranscriptionItemCard 
               key={item.id} item={item}
               onRemove={id => setItems(prev => prev.filter(i => i.id !== id))}
-              onUpdateJsonInput={(id, json) => setItems(prev => prev.map(i => i.id === id ? { ...i, inputJson: json, status: ProcessingStatus.IDLE, validationReport: undefined } : i))}
+              onUpdateJsonInput={(id, json) => setItems(prev => prev.map(i => i.id === id ? { ...i, inputJson: json, status: ProcessingStatus.IDLE, validationReport: undefined, postRepairValidation: undefined } : i))}
               onAudit={handleAudit}
               onTranscribe={handleTranscribe}
               onUpdateDraftText={(id, t) => setItems(prev => prev.map(i => i.id === id ? { ...i, finalTranscription: t } : i))}
               onUpdateJsonOutput={(id, json) => setItems(prev => prev.map(i => i.id === id ? { ...i, jsonOutput: json } : i))}
               onModelChange={(id, m) => setItems(prev => prev.map(i => i.id === id ? { ...i, model: m } : i))}
-              onRetry={id => setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.IDLE, validationReport: undefined, error: undefined } : i))}
+              onRetry={id => setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.IDLE, validationReport: undefined, postRepairValidation: undefined, error: undefined } : i))}
               onResetState={id => setItems(prev => prev.map(i => i.id === id ? { ...i, status: ProcessingStatus.READY_TO_FIX, error: undefined } : i))}
               onApplyFixes={handleApplyFixes}
+              onRefineFix={handleRefineFix}
               onDismissError={handleDismissError}
               onAddCustomError={handleAddCustomError}
               onPushToSheet={handlePushToSheet}

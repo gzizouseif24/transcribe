@@ -13,6 +13,7 @@ interface TranscriptionItemCardProps {
   onRetry: (id: string) => void;
   onResetState?: (id: string) => void;
   onApplyFixes: (id: string, activeErrors: ValidationError[]) => void;
+  onRefineFix: (id: string) => void;
   onDismissError: (id: string, index: number) => void;
   onAddCustomError: (id: string, error: ValidationError) => void;
   onPushToSheet: (id: string, accepted: 'Yes' | 'No') => Promise<'success' | 'error'>;
@@ -22,7 +23,7 @@ interface TranscriptionItemCardProps {
 export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({ 
   item, onRemove, onUpdateJsonInput, onAudit, onTranscribe,
   onUpdateDraftText, onUpdateJsonOutput, onModelChange, onRetry, onResetState,
-  onApplyFixes, onDismissError, onAddCustomError,
+  onApplyFixes, onRefineFix, onDismissError, onAddCustomError,
   onPushToSheet, canPush
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -76,8 +77,11 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
     ProcessingStatus.AUDITING, 
     ProcessingStatus.TRANSCRIBING, 
     ProcessingStatus.REPAIRING_JSON,
-    ProcessingStatus.RECONSTRUCTING_JSON
+    ProcessingStatus.RECONSTRUCTING_JSON,
+    ProcessingStatus.VALIDATING
   ].includes(item.status);
+
+  const isCompleted = item.status === ProcessingStatus.COMPLETED || item.status === ProcessingStatus.COMPLETED_WITH_WARNINGS;
 
   const getTagStyle = (tag: string) => {
     switch (tag) {
@@ -86,6 +90,7 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
       case 'CONTENT': return 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300';
       case 'PUNCTUATION': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300';
       case 'CUSTOM': return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300';
+      case 'STRUCTURE': return 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300';
       default: return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
     }
   };
@@ -283,8 +288,16 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
               <div className="p-4 bg-slate-50 dark:bg-slate-800/30 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4">
                  <div className="text-center">
                     <span className="text-[9px] font-black uppercase text-indigo-600 tracking-wider">Unified Repair</span>
-                    <p className="text-[7px] text-slate-500 uppercase mt-0.5">Applies remaining fixes using curated data</p>
+                    <p className="text-[7px] text-slate-500 uppercase mt-0.5">Applies fixes + validates output before delivery</p>
                  </div>
+
+                 {item.status === ProcessingStatus.VALIDATING && (
+                   <div className="flex items-center justify-center gap-2 py-2">
+                     <i className="fa-solid fa-shield-halved text-cyan-500 fa-beat-fade"></i>
+                     <span className="text-[9px] font-black text-cyan-500 uppercase">Validation Agent Checking...</span>
+                   </div>
+                 )}
+
                  <button 
                    onClick={() => onApplyFixes(item.id, activeErrors)} 
                    disabled={isBusy || (activeErrors.length === 0 && !item.finalTranscription?.trim())}
@@ -295,21 +308,52 @@ export const TranscriptionItemCard: React.FC<TranscriptionItemCardProps> = ({
               </div>
 
               {/* COMPLETED: copy + push to sheet */}
-              {item.status === ProcessingStatus.COMPLETED && (
+              {isCompleted && (
                  <div className="mt-4 p-4 bg-slate-900 rounded-2xl border border-slate-800 shadow-2xl animate-in fade-in slide-in-from-bottom-2 space-y-3">
                     <div className="flex justify-between items-center">
-                       <span className="text-[9px] font-black text-emerald-500 uppercase">REPAIRED JSON READY</span>
+                       <div className="flex items-center gap-2">
+                         <span className={`text-[9px] font-black uppercase ${item.status === ProcessingStatus.COMPLETED_WITH_WARNINGS ? 'text-amber-500' : 'text-emerald-500'}`}>
+                           {item.status === ProcessingStatus.COMPLETED_WITH_WARNINGS ? 'REPAIRED — REVIEW WARNINGS' : 'REPAIRED JSON READY'}
+                         </span>
+                         {item.postRepairValidation?.isClean && (
+                           <span className="text-[7px] font-black px-1.5 py-0.5 rounded bg-emerald-900/30 text-emerald-400 border border-emerald-800">
+                             <i className="fa-solid fa-shield-check mr-1"></i>VALIDATED
+                           </span>
+                         )}
+                       </div>
                        <button onClick={() => { navigator.clipboard.writeText(item.jsonOutput || ''); setIsCopied(true); setTimeout(() => setIsCopied(false), 2000); }} className={`text-[8px] font-black px-3 py-1 rounded-md transition-all ${isCopied ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300'}`}>
                           {isCopied ? 'Copied' : 'Copy Result'}
                        </button>
                     </div>
+
+                    {item.postRepairValidation && !item.postRepairValidation.isClean && (
+                      <div className="p-3 bg-amber-900/20 border border-amber-800 rounded-xl space-y-1.5">
+                        <p className="text-[8px] font-black text-amber-400 uppercase">
+                          <i className="fa-solid fa-triangle-exclamation mr-1.5"></i>
+                          Validation found {item.postRepairValidation.issues.length} issue{item.postRepairValidation.issues.length > 1 ? 's' : ''}:
+                        </p>
+                        {item.postRepairValidation.issues.map((issue, i) => (
+                          <p key={i} className="text-[9px] text-amber-300/80 pl-4">• {issue}</p>
+                        ))}
+                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-amber-800/50">
+                          <p className="text-[8px] text-amber-500/60 italic">Review or try auto-fix:</p>
+                          <button 
+                            onClick={() => onRefineFix(item.id)}
+                            disabled={isBusy}
+                            className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-white text-[9px] font-black uppercase rounded-lg transition-all shadow-lg shadow-amber-900/40 flex items-center gap-1.5 disabled:opacity-50"
+                          >
+                            <i className="fa-solid fa-wand-magic-sparkles"></i> Fix Warnings
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <textarea 
                        value={item.jsonOutput || ''}
                        onChange={(e) => onUpdateJsonOutput(item.id, e.target.value)}
                        className="w-full h-64 text-[10px] font-mono text-indigo-400/80 bg-black/40 p-3 rounded-xl scrollbar-hide border border-slate-800 focus:ring-1 focus:ring-emerald-500 outline-none resize-y"
                     />
 
-                    {/* PUSH TO SHEET */}
                     {canPush && (
                       <div className="pt-2 border-t border-slate-800 space-y-2">
                         <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center">Push to Sheet</p>

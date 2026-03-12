@@ -1,4 +1,3 @@
-
 export enum ProcessingStatus {
   IDLE = 'IDLE',                         
   AUDITING = 'AUDITING',   
@@ -6,8 +5,10 @@ export enum ProcessingStatus {
   TRANSCRIBING = 'TRANSCRIBING',         
   TEXT_READY = 'TEXT_READY',             
   ALIGNING = 'ALIGNING',                 
-  COMPLETED = 'COMPLETED',               
   REPAIRING_JSON = 'REPAIRING_JSON',
+  VALIDATING = 'VALIDATING',
+  COMPLETED = 'COMPLETED',
+  COMPLETED_WITH_WARNINGS = 'COMPLETED_WITH_WARNINGS',
   RECONSTRUCTING_JSON = 'RECONSTRUCTING_JSON',
   ERROR = 'ERROR',
 }
@@ -30,6 +31,11 @@ export interface ValidationReport {
   }
 }
 
+export interface PostRepairValidation {
+  isClean: boolean;
+  issues: string[];
+}
+
 export interface TranscriptionItem {
   id: string;
   file: File | Blob;
@@ -40,9 +46,11 @@ export interface TranscriptionItem {
   status: ProcessingStatus;
   inputJson: string; 
   validationReport?: ValidationReport;
+  postRepairValidation?: PostRepairValidation;
   finalTranscription?: string; 
   jsonOutput?: string;
   error?: string;
   addedAt: number;
   model: string;
+  rowNumber?: number;
 }
